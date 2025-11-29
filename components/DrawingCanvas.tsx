@@ -16,10 +16,14 @@ interface DrawingCanvasProps {
 
 // --- Helper Functions ---
 
-const dist = (p1: Point, p2: Point) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+// Fast distance (squared) to avoid sqrt in tight loops
+const distSq = (p1: Point, p2: Point) => (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+
+// Standard distance
+const dist = (p1: Point, p2: Point) => Math.sqrt(distSq(p1, p2));
 
 const distToSegment = (p: Point, v: Point, w: Point) => {
-  const l2 = Math.pow(dist(v, w), 2);
+  const l2 = distSq(v, w);
   if (l2 === 0) return dist(p, v);
   let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
   t = Math.max(0, Math.min(1, t));
@@ -36,10 +40,31 @@ const getPathLength = (points: Point[]): number => {
 };
 
 // Interpolates a point between two points based on ratio t (0-1)
+// Inlined in hot loops, but kept here for general use
 const lerpPoint = (p1: Point, p2: Point, t: number): Point => ({
     x: p1.x + (p2.x - p1.x) * t,
     y: p1.y + (p2.y - p1.y) * t
 });
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+// Binary search for the highest index i such that arr[i] <= value
+const getIndexForLength = (lengths: number[], target: number): number => {
+    let ans = 0;
+    let l = 0;
+    let r = lengths.length - 1;
+    
+    while (l <= r) {
+        let mid = (l + r) >> 1;
+        if (lengths[mid] <= target) {
+            ans = mid;
+            l = mid + 1;
+        } else {
+            r = mid - 1;
+        }
+    }
+    return ans; 
+};
 
 const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ 
   currentSettings, 
@@ -203,7 +228,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           // Standard direct drawing
           if (isDrawing) {
             const lastPoint = currentPathRef.current[currentPathRef.current.length - 1];
-            if (lastPoint && dist(lastPoint, point) > 2) {
+            if (lastPoint && distSq(lastPoint, point) > 4) { // > 2px squared
               currentPathRef.current.push(point);
             }
           }
@@ -245,22 +270,15 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const { left, right, cumulativeLengths } = precomputed;
     const count = cumulativeLengths.length;
 
-    // Binary search for start and end indices is faster than linear scan for large arrays,
-    // but linear is fine for < 100 points. Let's do a simple scan for robustness.
-    
-    let startIndex = 0;
-    let endIndex = count - 1;
+    // Use binary search for O(log N) lookup instead of O(N) scan
+    const startSearchIdx = getIndexForLength(cumulativeLengths, startLength);
+    const startIndex = Math.min(startSearchIdx, count - 2);
 
-    // Find closest indices (Performance: O(N), could be O(log N) but N is small)
-    while (startIndex < count - 1 && cumulativeLengths[startIndex + 1] < startLength) {
-        startIndex++;
-    }
-    while (endIndex > 0 && cumulativeLengths[endIndex - 1] > endLength) {
-        endIndex--;
-    }
+    const endSearchIdx = getIndexForLength(cumulativeLengths, endLength);
+    // Ensure endIndex captures the segment containing endLength
+    const endIndex = Math.min(endSearchIdx + 1, count - 1);
 
     // Determine interpolation factors for smooth cutoff
-    // This prevents the stroke from "jumping" between vertices
     const startSegmentLen = cumulativeLengths[startIndex + 1] - cumulativeLengths[startIndex];
     const endSegmentLen = cumulativeLengths[endIndex] - cumulativeLengths[endIndex - 1];
     
@@ -268,46 +286,60 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (startSegmentLen > 0) {
         startT = (startLength - cumulativeLengths[startIndex]) / startSegmentLen;
     }
-    // Clamp
-    startT = Math.max(0, Math.min(1, startT));
+    startT = startT < 0 ? 0 : (startT > 1 ? 1 : startT); // Fast clamp
     
-    let endT = 1; // Default to full segment
+    let endT = 1;
     if (endIndex > 0 && endSegmentLen > 0) {
         endT = (endLength - cumulativeLengths[endIndex - 1]) / endSegmentLen;
     }
-    endT = Math.max(0, Math.min(1, endT));
+    endT = endT < 0 ? 0 : (endT > 1 ? 1 : endT); // Fast clamp
 
     // Construct the polygon
     ctx.beginPath();
     
-    // 1. Interpolated Start Points
-    const pStartLeft = lerpPoint(left[startIndex], left[startIndex + 1] || left[startIndex], startT);
-    const pStartRight = lerpPoint(right[startIndex], right[startIndex + 1] || right[startIndex], startT);
+    // 1. Interpolated Start Points (Inlined lerp for perf)
+    const ls1 = left[startIndex];
+    const ls2 = left[startIndex + 1] || left[startIndex];
+    const rs1 = right[startIndex];
+    const rs2 = right[startIndex + 1] || right[startIndex];
+
+    const pStartLeftX = lerp(ls1.x, ls2.x, startT);
+    const pStartLeftY = lerp(ls1.y, ls2.y, startT);
+    const pStartRightX = lerp(rs1.x, rs2.x, startT);
+    const pStartRightY = lerp(rs1.y, rs2.y, startT);
 
     // 2. Interpolated End Points
     // Careful: endIndex indexes the point *after* the segment
     const idxEndBase = Math.max(0, endIndex - 1);
     const idxEndNext = endIndex;
-    const pEndLeft = lerpPoint(left[idxEndBase], left[idxEndNext], endT);
-    const pEndRight = lerpPoint(right[idxEndBase], right[idxEndNext], endT);
+    
+    const le1 = left[idxEndBase];
+    const le2 = left[idxEndNext];
+    const re1 = right[idxEndBase];
+    const re2 = right[idxEndNext];
+
+    const pEndLeftX = lerp(le1.x, le2.x, endT);
+    const pEndLeftY = lerp(le1.y, le2.y, endT);
+    const pEndRightX = lerp(re1.x, re2.x, endT);
+    const pEndRightY = lerp(re1.y, re2.y, endT);
 
     // Trace Outline
-    ctx.moveTo(pStartLeft.x, pStartLeft.y);
+    ctx.moveTo(pStartLeftX, pStartLeftY);
 
     // Left side forward
     for (let i = startIndex + 1; i < endIndex; i++) {
         ctx.lineTo(left[i].x, left[i].y);
     }
     
-    ctx.lineTo(pEndLeft.x, pEndLeft.y);
-    ctx.lineTo(pEndRight.x, pEndRight.y);
+    ctx.lineTo(pEndLeftX, pEndLeftY);
+    ctx.lineTo(pEndRightX, pEndRightY);
 
     // Right side backward
     for (let i = endIndex - 1; i > startIndex; i--) {
         ctx.lineTo(right[i].x, right[i].y);
     }
 
-    ctx.lineTo(pStartRight.x, pStartRight.y);
+    ctx.lineTo(pStartRightX, pStartRightY);
     ctx.closePath();
     ctx.fill();
 
@@ -324,8 +356,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       let started = false;
       let d = 0;
       
-      // We can use the same indexing logic roughly for the spine
-      // Just drawing the whole spine within range is easier
+      // Simple loop for spine is acceptable as selection is rare and single
       for (let i = 0; i < points.length; i++) {
          if (i>0) d += dist(points[i-1], points[i]);
          if (d >= startLength && d <= endLength) {
@@ -354,27 +385,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (endColor && points.length > 1) {
         const startP = points[0];
         const endP = points[points.length - 1];
-        // Optimization: Create gradient once per frame per stroke, not per symmetry if possible,
-        // but coordinates change. Keeping this is okay as it's not the main bottleneck.
+        // Optimization: Create gradient once per frame per stroke
         const gradient = ctx.createLinearGradient(startP.x, startP.y, endP.x, endP.y);
         gradient.addColorStop(0, color);
         gradient.addColorStop(1, endColor);
         ctx.fillStyle = gradient;
     } else {
         ctx.fillStyle = color;
-    }
-
-    // No strokeStyle needed for fill, unless selection
-    
-    // Calculate animation state once per stroke
-    let startLen = 0;
-    let endLen = totalLength;
-
-    if (!forceFullDraw) {
-        const baseProgress = (time * stroke.speed + stroke.phase); 
-        // We pass the phase offset to the drawInstance, so we calculate specific lengths inside the loop if needed?
-        // Actually, for Radial symmetry with phase shift, the lengths differ per copy.
-        // So we must calculate lengths inside the symmetry loop.
     }
 
     const drawInstance = (phaseOffset: number, transformFn: () => void) => {
@@ -620,7 +637,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             if (isDrawing) {
                 const newP = { ...physicsStateRef.current.pos };
                 const lastP = currentPathRef.current[currentPathRef.current.length - 1];
-                if (!lastP || dist(lastP, newP) > 1) { 
+                if (!lastP || distSq(lastP, newP) > 1) { 
                     currentPathRef.current.push(newP);
                 }
             }

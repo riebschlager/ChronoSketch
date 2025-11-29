@@ -26,11 +26,14 @@ import {
   ChevronRight,
   Wand2,
   Orbit,
-  AlignJustify
+  AlignJustify,
+  EyeOff,
+  Minimize2,
+  Menu
 } from 'lucide-react';
 
 interface ControlPanelProps {
-  settings: Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp'>;
+  settings: Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp' | 'precomputed'>;
   setSettings: (newSettings: any) => void;
   onClear: () => void;
   onUndo: () => void;
@@ -80,6 +83,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const [palettePrompt, setPalettePrompt] = useState('');
   const [isGeneratingPalette, setIsGeneratingPalette] = useState(false);
   const [isGeneratingStroke, setIsGeneratingStroke] = useState(false);
+  const [isPanelVisible, setIsPanelVisible] = useState(true);
   
   // Persistent Palette History
   const [paletteHistory, setPaletteHistory] = useState<string[][]>(() => {
@@ -110,6 +114,16 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
   const toggleSection = (section: string) => {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const collapseAllSections = () => {
+    setOpenSections({
+        style: false,
+        motion: false,
+        symmetry: false,
+        orbit: false,
+        project: false
+    });
   };
 
   const updateSetting = <K extends keyof typeof settings>(key: K, value: typeof settings[K]) => {
@@ -215,6 +229,20 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     </button>
   );
 
+  if (!isPanelVisible) {
+    return (
+        <button
+            onClick={() => setIsPanelVisible(true)}
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
+            className="fixed z-50 top-4 right-4 bg-slate-900/80 hover:bg-slate-800 backdrop-blur-md text-white p-3 rounded-xl shadow-lg border border-slate-700 transition-all hover:scale-110 hover:shadow-cyan-900/20 group"
+            title="Show Controls"
+        >
+            <Menu size={24} className="text-slate-300 group-hover:text-white" />
+        </button>
+    );
+  }
+
   return (
     <div 
       className={`fixed z-50 top-4 right-4 w-80 bg-slate-900/95 backdrop-blur-md border rounded-xl shadow-2xl flex flex-col max-h-[90vh] select-none transition-all duration-300 ${containerBorder}`}
@@ -222,33 +250,67 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       onMouseLeave={onMouseLeave}
     >
       {/* --- Fixed Header --- */}
-      <div className="flex-none flex items-center justify-between border-b border-slate-700 p-4">
+      <div className="flex-none flex flex-col gap-3 border-b border-slate-700 p-4">
+        {/* Row 1: Title */}
         <h1 className={`font-bold text-lg flex items-center gap-2 transition-colors ${accentColor}`}>
           {isEditing ? <Edit2 size={20}/> : <Activity size={20}/>}
           {isEditing ? 'Edit Stroke' : 'ChronoSketch'}
         </h1>
-        <div className="flex items-center gap-3">
-            <button
-                onClick={onToggleSelectionLock}
-                className={`flex items-center justify-center p-1.5 rounded transition-all ${
-                    selectionLocked 
-                    ? 'bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/50' 
-                    : 'text-slate-500 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-                title={selectionLocked ? "Unlock Selection" : "Lock Selection (Draw Only)"}
-            >
-                {selectionLocked ? <Lock size={14} /> : <Unlock size={14} />}
-            </button>
+        
+        {/* Row 2: Header Controls */}
+        <div className="flex items-center justify-between">
+            {/* Context Label */}
+            <div className="text-[10px] text-slate-500 font-mono uppercase tracking-widest font-semibold">
+                {isEditing ? 'Properties' : 'Settings'}
+            </div>
 
-            {isEditing && (
-                <button 
-                  onClick={onDeselect}
-                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 bg-slate-800 px-2 py-1 rounded"
+            {/* Toolbar */}
+            <div className="flex items-center gap-1">
+                <button
+                    onClick={collapseAllSections}
+                    className="text-slate-500 hover:text-white p-1.5 rounded hover:bg-slate-800 transition-colors"
+                    title="Collapse All Sections"
                 >
-                  <XCircle size={12}/> Done
+                    <Minimize2 size={16} />
                 </button>
-            )}
-            {!isEditing && <div className="text-xs text-slate-400">{strokeCount} Layers</div>}
+
+                <div className="w-px h-4 bg-slate-800 mx-0.5"></div>
+
+                <button
+                    onClick={onToggleSelectionLock}
+                    className={`flex items-center justify-center p-1.5 rounded transition-all ${
+                        selectionLocked 
+                        ? 'bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/50' 
+                        : 'text-slate-500 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                    title={selectionLocked ? "Unlock Selection" : "Lock Selection (Draw Only)"}
+                >
+                    {selectionLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                </button>
+
+                {isEditing ? (
+                    <button 
+                    onClick={onDeselect}
+                    className="ml-1 text-xs text-slate-400 hover:text-white flex items-center gap-1 bg-slate-800 px-2 py-1 rounded transition-colors"
+                    >
+                    <XCircle size={12}/> Done
+                    </button>
+                ) : (
+                    <div className="text-[10px] text-slate-500 font-mono min-w-[32px] text-center px-1">
+                        {strokeCount}L
+                    </div>
+                )}
+
+                <div className="w-px h-4 bg-slate-800 mx-0.5"></div>
+
+                <button
+                    onClick={() => setIsPanelVisible(false)}
+                    className="text-slate-500 hover:text-white p-1.5 rounded hover:bg-slate-800 transition-colors"
+                    title="Hide Controls"
+                >
+                    <EyeOff size={16} />
+                </button>
+            </div>
         </div>
       </div>
 
@@ -555,7 +617,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                       <input 
                         type="range" 
                         min="0.1" 
-                        max="5.0" 
+                        max="10.0" 
                         step="0.1"
                         value={settings.orbit?.mass || 2.0}
                         onChange={(e) => updateOrbit('mass', Number(e.target.value))}
@@ -565,13 +627,13 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                     <div className="mt-3">
                       <div className="flex justify-between text-xs text-slate-500 mb-1">
                         <span>Friction (Damping)</span>
-                        <span>{Math.round((settings.orbit?.friction || 0.9) * 100)}%</span>
+                        <span>{((settings.orbit?.friction || 0.95) * 100).toFixed(1)}%</span>
                       </div>
                       <input 
                         type="range" 
-                        min="0.80" 
-                        max="0.99" 
-                        step="0.01"
+                        min="0.100" 
+                        max="0.999" 
+                        step="0.001"
                         value={settings.orbit?.friction || 0.95}
                         onChange={(e) => updateOrbit('friction', Number(e.target.value))}
                         className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-orange-500'}`}

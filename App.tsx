@@ -6,7 +6,8 @@ import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSe
 
 // --- Geometry Helpers ---
 
-const dist = (p1: Point, p2: Point) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+// Replaced pow with direct multiplication for slight perf gain in hot paths
+const dist = (p1: Point, p2: Point) => Math.sqrt((p2.x - p1.x)*(p2.x - p1.x) + (p2.y - p1.y)*(p2.y - p1.y));
 
 const getPathLength = (points: Point[]): number => {
   let length = 0;
@@ -29,17 +30,20 @@ const simplifyPoints = (points: Point[], tolerance: number): Point[] => {
     const p = points[i];
     // Perpendicular distance
     let d = 0;
-    const l2 = Math.pow(dist(start, end), 2);
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const l2 = dx * dx + dy * dy;
+    
     if (l2 === 0) {
       d = dist(p, start);
     } else {
-      const t = ((p.x - start.x) * (end.x - start.x) + (p.y - start.y) * (end.y - start.y)) / l2;
+      const t = ((p.x - start.x) * dx + (p.y - start.y) * dy) / l2;
       if (t < 0) d = dist(p, start);
       else if (t > 1) d = dist(p, end);
       else {
         const proj = {
-          x: start.x + t * (end.x - start.x),
-          y: start.y + t * (end.y - start.y)
+          x: start.x + t * dx,
+          y: start.y + t * dy
         };
         d = dist(p, proj);
       }
@@ -175,15 +179,15 @@ function App() {
     endColor: undefined, // Default no gradient
     width: 4,
     taper: 0, // Default no taper
-    smoothing: 3, // Default some smoothing
-    simplification: 2, // Default slight simplification
+    smoothing: 0, // Default no smoothing
+    simplification: 0, // Default no simplification
     speed: 0.5,
     phase: 0,
     animationMode: AnimationMode.FLOW, // Default to the new flow mode
     symmetry: {
       type: SymmetryType.NONE,
       copies: 8,
-      phaseShift: 0.05,
+      phaseShift: 0,
       gridGap: 150,
     },
     orbit: {

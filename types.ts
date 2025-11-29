@@ -28,8 +28,8 @@ export interface SymmetrySettings {
 
 export interface OrbitSettings {
   enabled: boolean;
-  mass: number;      // Determines how "heavy" the cursor feels (0.1 to 5.0)
-  friction: number;  // Determines how quickly it stops (0.8 to 0.99)
+  mass: number;      // Determines how "heavy" the cursor feels (0.1 to 10.0)
+  friction: number;  // Determines how quickly it stops (0.1 to 0.999)
 }
 
 export interface StrokeSettings {
