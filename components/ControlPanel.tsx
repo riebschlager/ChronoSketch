@@ -328,7 +328,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                   <div className="w-px h-4 bg-slate-800 mx-0.5"></div>
 
                   <button
-                      onClick={() => setIsPanelVisible(false)}
+                      onClick={() => {
+                        setIsPanelVisible(false);
+                        onMouseLeave();
+                      }}
                       className="text-slate-500 hover:text-white p-1.5 rounded hover:bg-slate-800 transition-colors"
                       title="Hide Controls"
                   >
