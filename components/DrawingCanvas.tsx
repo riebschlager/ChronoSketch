@@ -13,6 +13,7 @@ interface DrawingCanvasProps {
   selectionLocked: boolean;
   canvasRef: React.RefObject<HTMLCanvasElement>;
   globalSpeed: number;
+  showDebug: boolean;
 }
 
 // --- Helper Functions ---
@@ -107,7 +108,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   isUIHovered,
   selectionLocked,
   canvasRef,
-  globalSpeed
+  globalSpeed,
+  showDebug
 }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const currentPathRef = useRef<Point[]>([]);
@@ -125,6 +127,18 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const lastTimeRef = useRef<number>(0);
   const scaledTimeRef = useRef<number>(0);
   
+  // Debug Performance Stats
+  const debugPanelRef = useRef<HTMLDivElement>(null);
+  const statsRef = useRef({
+    lastTime: 0,
+    frameCount: 0,
+    fps: 0,
+    minFps: 60,
+    maxFps: 0,
+    renderTimeAccumulator: 0,
+    lastRenderTime: 0
+  });
+
   // Use a ref for globalSpeed to access it inside the animation loop 
   // without triggering a re-creation of the loop callback
   const globalSpeedRef = useRef(globalSpeed);
@@ -758,6 +772,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    
+    // Performance: Start timer
+    const perfStart = performance.now();
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
@@ -848,8 +865,48 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
          renderGhostCursor(ctx, canvas.width, canvas.height, mousePosRef.current || {x:0,y:0});
     }
 
+    // Performance: End timer
+    const perfEnd = performance.now();
+    const renderDuration = perfEnd - perfStart;
+
+    // Debug Stats Update
+    if (showDebug && debugPanelRef.current) {
+        const s = statsRef.current;
+        s.frameCount++;
+        s.renderTimeAccumulator += renderDuration;
+
+        // Update DOM every 500ms
+        if (time - s.lastTime >= 500) {
+            s.fps = Math.round((s.frameCount * 1000) / (time - s.lastTime));
+            s.minFps = Math.min(s.minFps, s.fps);
+            s.maxFps = Math.max(s.maxFps, s.fps);
+            s.lastRenderTime = s.renderTimeAccumulator / s.frameCount;
+            
+            s.frameCount = 0;
+            s.renderTimeAccumulator = 0;
+            s.lastTime = time;
+
+            const totalPoints = strokesRef.current.reduce((acc, str) => acc + str.points.length, 0);
+            const res = `${canvas.width}x${canvas.height}`;
+            const mem = (performance as any).memory ? Math.round((performance as any).memory.usedJSHeapSize / 1024 / 1024) + 'MB' : 'N/A';
+            const mouse = mousePosRef.current ? `${Math.round(mousePosRef.current.x)},${Math.round(mousePosRef.current.y)}` : 'N/A';
+            
+            debugPanelRef.current.innerText = 
+`DEBUG METRICS
+----------------
+FPS: ${s.fps} (Min: ${s.minFps}, Max: ${s.maxFps})
+Frame Time: ${s.lastRenderTime.toFixed(2)}ms
+Resolution: ${res}
+Strokes: ${strokesRef.current.length}
+Total Points: ${totalPoints}
+Memory: ${mem}
+Cursor: ${mouse}
+Render Scale: ${globalSpeedRef.current.toFixed(1)}x`;
+        }
+    }
+
     animationFrameRef.current = requestAnimationFrame(renderLoop);
-  }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered]); // Removed globalSpeed from dependency
+  }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered, showDebug]); // Added showDebug
 
   useEffect(() => {
     animationFrameRef.current = requestAnimationFrame(renderLoop);
@@ -869,17 +926,27 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
-      onMouseDown={handleStart}
-      onMouseMove={handleMove}
-      onMouseUp={handleEnd}
-      onMouseLeave={handleLeave}
-      onTouchStart={handleStart}
-      onTouchMove={handleMove}
-      onTouchEnd={handleEnd}
-      className={`absolute top-0 left-0 w-full h-full block ${selectionLocked ? 'cursor-crosshair' : 'cursor-default'}`}
-    />
+    <>
+        <canvas
+            ref={canvasRef}
+            onMouseDown={handleStart}
+            onMouseMove={handleMove}
+            onMouseUp={handleEnd}
+            onMouseLeave={handleLeave}
+            onTouchStart={handleStart}
+            onTouchMove={handleMove}
+            onTouchEnd={handleEnd}
+            className={`absolute top-0 left-0 w-full h-full block ${selectionLocked ? 'cursor-crosshair' : 'cursor-default'}`}
+        />
+        {showDebug && (
+            <div 
+                ref={debugPanelRef}
+                className="absolute bottom-4 left-4 p-4 bg-slate-900/90 text-cyan-400 font-mono text-xs rounded-lg border border-cyan-900/50 shadow-2xl pointer-events-none z-50 whitespace-pre leading-relaxed select-none backdrop-blur-md"
+            >
+                Collecting stats...
+            </div>
+        )}
+    </>
   );
 };
 

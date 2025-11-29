@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import DrawingCanvas from './components/DrawingCanvas';
 import ControlPanel from './components/ControlPanel';
 import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings, EasingType } from './types';
@@ -170,6 +170,7 @@ function App() {
   const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
   const [selectionLocked, setSelectionLocked] = useState(false);
   const [globalSpeed, setGlobalSpeed] = useState(1.0);
+  const [showDebug, setShowDebug] = useState(false);
   
   // Ref for the canvas to support snapshot functionality
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -203,6 +204,18 @@ function App() {
   
   // Flatten panel settings for display
   const panelSettings = activeStroke || currentSettings;
+
+  // Add Keyboard Shortcut for Debug Panel
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        // Toggle debug with Backtick (`) or F3
+        if (e.key === '`' || e.key === 'F3') {
+            setShowDebug(prev => !prev);
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const updatePanelSettings = (updates: any) => {
     if (activeStroke) {
@@ -411,6 +424,7 @@ function App() {
         selectionLocked={selectionLocked}
         canvasRef={canvasRef}
         globalSpeed={globalSpeed}
+        showDebug={showDebug}
       />
       
       <ControlPanel 
@@ -432,6 +446,8 @@ function App() {
         onRedistributePhases={handleRedistributePhases}
         globalSpeed={globalSpeed}
         setGlobalSpeed={setGlobalSpeed}
+        showDebug={showDebug}
+        onToggleDebug={() => setShowDebug(!showDebug)}
       />
 
       {strokes.length === 0 && (

@@ -30,7 +30,8 @@ import {
   EyeOff,
   Minimize2,
   Menu,
-  MousePointer2
+  MousePointer2,
+  Bug
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -52,6 +53,8 @@ interface ControlPanelProps {
   onRedistributePhases: () => void;
   globalSpeed: number;
   setGlobalSpeed: (speed: number) => void;
+  showDebug: boolean;
+  onToggleDebug: () => void;
 }
 
 const DEFAULT_PALETTES = [
@@ -82,7 +85,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onAIGenerateStroke,
   onRedistributePhases,
   globalSpeed,
-  setGlobalSpeed
+  setGlobalSpeed,
+  showDebug,
+  onToggleDebug
 }) => {
   const [activeColorTarget, setActiveColorTarget] = useState<'color' | 'endColor'>('color');
   const [palettePrompt, setPalettePrompt] = useState('');
@@ -328,6 +333,18 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                           {strokeCount}L
                       </div>
                   )}
+
+                  <div className="w-px h-4 bg-slate-800 mx-0.5"></div>
+
+                  <button 
+                      onClick={onToggleDebug}
+                      className={`p-1.5 rounded transition-all ${
+                          showDebug ? "text-cyan-400 bg-cyan-900/20" : "text-slate-500 hover:text-white hover:bg-slate-800"
+                      }`}
+                      title="Toggle Performance Stats (`)"
+                  >
+                      <Bug size={16} />
+                  </button>
 
                   <div className="w-px h-4 bg-slate-800 mx-0.5"></div>
 
