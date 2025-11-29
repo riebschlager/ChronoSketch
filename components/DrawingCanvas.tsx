@@ -1,8 +1,17 @@
-
-
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Stroke, Point, SymmetryType, AnimationMode, PrecomputedRibbon, EasingType, CapType } from '../types';
-import { computeRibbon } from '../App'; // Imported for the live preview stroke
+import { 
+    computeRibbon, 
+    distSq, 
+    dist, 
+    distToSegment, 
+    getPathLength, 
+    lerp, 
+    lerpPoint, 
+    getIndexForLength, 
+    applyEasing, 
+    hexToRgb 
+} from '../geometry';
 
 interface DrawingCanvasProps {
   currentSettings: Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp' | 'precomputed'>;
@@ -17,89 +26,6 @@ interface DrawingCanvasProps {
   showDebug: boolean;
   animationTimeRef: React.MutableRefObject<number>;
 }
-
-// --- Helper Functions ---
-
-export const hexToRgb = (hex: string) => {
-  // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
-  const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-  hex = hex.replace(shorthandRegex, (m, r, g, b) => {
-    return r + r + g + g + b + b;
-  });
-
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : { r: 0, g: 0, b: 0 };
-};
-
-// Fast distance (squared) to avoid sqrt in tight loops
-const distSq = (p1: Point, p2: Point) => (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
-
-// Standard distance
-const dist = (p1: Point, p2: Point) => Math.sqrt(distSq(p1, p2));
-
-const distToSegment = (p: Point, v: Point, w: Point) => {
-  const l2 = distSq(v, w);
-  if (l2 === 0) return dist(p, v);
-  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
-  t = Math.max(0, Math.min(1, t));
-  const projection = { x: v.x + t * (w.x - v.x), y: v.y + t * (w.y - v.y) };
-  return dist(p, projection);
-};
-
-const getPathLength = (points: Point[]): number => {
-  let length = 0;
-  for (let i = 1; i < points.length; i++) {
-    length += dist(points[i - 1], points[i]);
-  }
-  return length;
-};
-
-// Interpolates a point between two points based on ratio t (0-1)
-// Inlined in hot loops, but kept here for general use
-const lerpPoint = (p1: Point, p2: Point, t: number): Point => ({
-    x: p1.x + (p2.x - p1.x) * t,
-    y: p1.y + (p2.y - p1.y) * t
-});
-
-export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-
-// Binary search for the highest index i such that arr[i] <= value
-export const getIndexForLength = (lengths: number[], target: number): number => {
-    let ans = 0;
-    let l = 0;
-    let r = lengths.length - 1;
-    
-    while (l <= r) {
-        let mid = (l + r) >> 1;
-        if (lengths[mid] <= target) {
-            ans = mid;
-            l = mid + 1;
-        } else {
-            r = mid - 1;
-        }
-    }
-    return ans; 
-};
-
-// Easing Functions
-export const applyEasing = (t: number, type: EasingType): number => {
-    switch (type) {
-        case EasingType.LINEAR: return t;
-        case EasingType.EASE_IN: return t * t;
-        case EasingType.EASE_OUT: return t * (2 - t);
-        case EasingType.EASE_IN_OUT: return t < .5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-        case EasingType.SINE: return (1 - Math.cos(t * Math.PI)) / 2;
-        case EasingType.ELASTIC: 
-            if (t === 0 || t === 1) return t;
-            const p = 0.3;
-            return Math.pow(2, -10 * t) * Math.sin((t - p / 4) * (2 * Math.PI) / p) + 1;
-        default: return t;
-    }
-};
 
 const drawCap = (
   ctx: CanvasRenderingContext2D,
