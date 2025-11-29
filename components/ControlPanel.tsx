@@ -627,15 +627,18 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                     <div className="mt-3">
                       <div className="flex justify-between text-xs text-slate-500 mb-1">
                         <span>Friction (Damping)</span>
-                        <span>{((settings.orbit?.friction || 0.95) * 100).toFixed(1)}%</span>
+                        {/* Display inverted friction: 1.0 (100% friction) means full stop */}
+                        <span>{((1 - (settings.orbit?.friction || 0.95)) * 100).toFixed(1)}%</span>
                       </div>
                       <input 
                         type="range" 
-                        min="0.100" 
-                        max="0.999" 
+                        // Slider goes from Low Damping (0.001) to High Damping (0.9)
+                        // Corresponds to Friction 0.999 (slow stop) to 0.1 (fast stop)
+                        min="0.001" 
+                        max="0.900" 
                         step="0.001"
-                        value={settings.orbit?.friction || 0.95}
-                        onChange={(e) => updateOrbit('friction', Number(e.target.value))}
+                        value={1 - (settings.orbit?.friction || 0.95)}
+                        onChange={(e) => updateOrbit('friction', 1 - Number(e.target.value))}
                         className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-orange-500'}`}
                       />
                     </div>
