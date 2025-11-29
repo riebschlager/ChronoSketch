@@ -17,6 +17,21 @@ interface DrawingCanvasProps {
 
 // --- Helper Functions ---
 
+const hexToRgb = (hex: string) => {
+  // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
+  const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+  hex = hex.replace(shorthandRegex, (m, r, g, b) => {
+    return r + r + g + g + b + b;
+  });
+
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 0, g: 0, b: 0 };
+};
+
 // Fast distance (squared) to avoid sqrt in tight loops
 const distSq = (p1: Point, p2: Point) => (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
 
@@ -292,6 +307,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     endLength: number,
     totalLength: number,
     baseWidth: number,
+    color: string,
+    endColor?: string,
     isSelected: boolean = false
   ) => {
     if (precomputed.left.length < 2) return;
@@ -324,9 +341,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
     endT = endT < 0 ? 0 : (endT > 1 ? 1 : endT); // Fast clamp
 
-    // Construct the polygon
-    ctx.beginPath();
-    
     // 1. Interpolated Start Points (Inlined lerp for perf)
     const ls1 = left[startIndex];
     const ls2 = left[startIndex + 1] || left[startIndex];
@@ -353,25 +367,96 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const pEndRightX = lerp(re1.x, re2.x, endT);
     const pEndRightY = lerp(re1.y, re2.y, endT);
 
-    // Trace Outline
-    ctx.moveTo(pStartLeftX, pStartLeftY);
+    // RENDER: Gradient Path or Solid Path
+    if (endColor) {
+        // --- GRADIENT ALONG PATH MODE ---
+        const startRgb = hexToRgb(color);
+        const endRgb = hexToRgb(endColor);
+        const dr = endRgb.r - startRgb.r;
+        const dg = endRgb.g - startRgb.g;
+        const db = endRgb.b - startRgb.b;
 
-    // Left side forward
-    for (let i = startIndex + 1; i < endIndex; i++) {
-        ctx.lineTo(left[i].x, left[i].y);
+        let curL = { x: pStartLeftX, y: pStartLeftY };
+        let curR = { x: pStartRightX, y: pStartRightY };
+        let curDist = startLength;
+
+        // Iterate through full segments between start and end
+        for (let i = startIndex + 1; i < endIndex; i++) {
+            const nextL = left[i];
+            const nextR = right[i];
+            const nextDist = cumulativeLengths[i];
+            
+            // Calculate color at midpoint of segment for smooth appearance
+            const midDist = (curDist + nextDist) * 0.5;
+            const t = Math.max(0, Math.min(1, midDist / totalLength));
+            
+            const r = Math.round(startRgb.r + dr * t);
+            const g = Math.round(startRgb.g + dg * t);
+            const b = Math.round(startRgb.b + db * t);
+            
+            const segColor = `rgb(${r},${g},${b})`;
+            ctx.fillStyle = segColor;
+            ctx.strokeStyle = segColor;
+            ctx.lineWidth = 1; // Small stroke to cover anti-aliasing gaps
+
+            ctx.beginPath();
+            ctx.moveTo(curL.x, curL.y);
+            ctx.lineTo(nextL.x, nextL.y);
+            ctx.lineTo(nextR.x, nextR.y);
+            ctx.lineTo(curR.x, curR.y);
+            ctx.fill();
+
+            // Stroke the seam between this segment and the next to hide gaps
+            ctx.beginPath();
+            ctx.moveTo(nextL.x, nextL.y);
+            ctx.lineTo(nextR.x, nextR.y);
+            ctx.stroke();
+
+            curL = nextL;
+            curR = nextR;
+            curDist = nextDist;
+        }
+
+        // Final segment from last full point (or start point) to cutoff point
+        const midDist = (curDist + endLength) * 0.5;
+        const t = Math.max(0, Math.min(1, midDist / totalLength));
+        const r = Math.round(startRgb.r + dr * t);
+        const g = Math.round(startRgb.g + dg * t);
+        const b = Math.round(startRgb.b + db * t);
+        
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.beginPath();
+        ctx.moveTo(curL.x, curL.y);
+        ctx.lineTo(pEndLeftX, pEndLeftY);
+        ctx.lineTo(pEndRightX, pEndRightY);
+        ctx.lineTo(curR.x, curR.y);
+        ctx.fill();
+
+    } else {
+        // --- SOLID COLOR MODE (Optimized Single Poly) ---
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        
+        // Trace Outline
+        ctx.moveTo(pStartLeftX, pStartLeftY);
+
+        // Left side forward
+        for (let i = startIndex + 1; i < endIndex; i++) {
+            ctx.lineTo(left[i].x, left[i].y);
+        }
+        
+        ctx.lineTo(pEndLeftX, pEndLeftY);
+        ctx.lineTo(pEndRightX, pEndRightY);
+
+        // Right side backward
+        for (let i = endIndex - 1; i > startIndex; i--) {
+            ctx.lineTo(right[i].x, right[i].y);
+        }
+
+        ctx.lineTo(pStartRightX, pStartRightY);
+        ctx.closePath();
+        ctx.fill();
     }
-    
-    ctx.lineTo(pEndLeftX, pEndLeftY);
-    ctx.lineTo(pEndRightX, pEndRightY);
-
-    // Right side backward
-    for (let i = endIndex - 1; i > startIndex; i--) {
-        ctx.lineTo(right[i].x, right[i].y);
-    }
-
-    ctx.lineTo(pStartRightX, pStartRightY);
-    ctx.closePath();
-    ctx.fill();
 
     // Selection Highlight (Draws the spine)
     if (isSelected) {
@@ -412,17 +497,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const centerX = width / 2;
     const centerY = height / 2;
 
-    if (endColor && points.length > 1) {
-        const startP = points[0];
-        const endP = points[points.length - 1];
-        // Optimization: Create gradient once per frame per stroke
-        const gradient = ctx.createLinearGradient(startP.x, startP.y, endP.x, endP.y);
-        gradient.addColorStop(0, color);
-        gradient.addColorStop(1, endColor);
-        ctx.fillStyle = gradient;
-    } else {
-        ctx.fillStyle = color;
-    }
+    // Note: We no longer set ctx.fillStyle here.
+    // The renderStrokePath function now handles color, including path-following gradients.
 
     const drawInstance = (phaseOffset: number, transformFn: () => void) => {
         ctx.save();
@@ -468,8 +544,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             }
         }
         
-        // Use optimized renderer
-        renderStrokePath(ctx, precomputed, points, localStart, localEnd, totalLength, strokeWidth, isSelected);
+        // Use optimized renderer with gradient support
+        renderStrokePath(ctx, precomputed, points, localStart, localEnd, totalLength, strokeWidth, color, endColor, isSelected);
         ctx.restore();
     };
 
