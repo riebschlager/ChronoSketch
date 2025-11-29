@@ -11,7 +11,7 @@ interface DrawingCanvasProps {
   onSelectStroke: (id: string | null) => void;
   isUIHovered: boolean;
   selectionLocked: boolean;
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
 }
 
 // --- Helper Functions ---
