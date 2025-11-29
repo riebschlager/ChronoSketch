@@ -1,7 +1,6 @@
-import { Point, EasingType, PrecomputedRibbon, CapType } from './types';
+import { Point, EasingType, PrecomputedRibbon } from './types';
 
 export const hexToRgb = (hex: string) => {
-  // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
   const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
   hex = hex.replace(shorthandRegex, (m, r, g, b) => {
     return r + r + g + g + b + b;
@@ -15,10 +14,8 @@ export const hexToRgb = (hex: string) => {
   } : { r: 0, g: 0, b: 0 };
 };
 
-// Fast distance (squared) to avoid sqrt in tight loops
 export const distSq = (p1: Point, p2: Point) => (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
 
-// Standard distance
 export const dist = (p1: Point, p2: Point) => Math.sqrt(distSq(p1, p2));
 
 export const distToSegment = (p: Point, v: Point, w: Point) => {
@@ -38,7 +35,6 @@ export const getPathLength = (points: Point[]): number => {
   return length;
 };
 
-// Interpolates a point between two points based on ratio t (0-1)
 export const lerpPoint = (p1: Point, p2: Point, t: number): Point => ({
     x: p1.x + (p2.x - p1.x) * t,
     y: p1.y + (p2.y - p1.y) * t
@@ -46,7 +42,6 @@ export const lerpPoint = (p1: Point, p2: Point, t: number): Point => ({
 
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-// Binary search for the highest index i such that arr[i] <= value
 export const getIndexForLength = (lengths: number[], target: number): number => {
     let ans = 0;
     let l = 0;
@@ -64,15 +59,18 @@ export const getIndexForLength = (lengths: number[], target: number): number => 
     return ans; 
 };
 
-// Easing Functions
-export const applyEasing = (t: number, type: EasingType): number => {
-    switch (type) {
-        case EasingType.LINEAR: return t;
-        case EasingType.EASE_IN: return t * t;
-        case EasingType.EASE_OUT: return t * (2 - t);
-        case EasingType.EASE_IN_OUT: return t < .5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-        case EasingType.SINE: return (1 - Math.cos(t * Math.PI)) / 2;
-        case EasingType.ELASTIC: 
+// Robust Easing application that handles string matching safely
+export const applyEasing = (t: number, type: string | EasingType): number => {
+    // Ensure we are comparing strings to avoid enum runtime issues
+    const typeStr = String(type);
+    
+    switch (typeStr) {
+        case 'LINEAR': return t;
+        case 'EASE_IN': return t * t;
+        case 'EASE_OUT': return t * (2 - t);
+        case 'EASE_IN_OUT': return t < .5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        case 'SINE': return (1 - Math.cos(t * Math.PI)) / 2;
+        case 'ELASTIC': 
             if (t === 0 || t === 1) return t;
             const p = 0.3;
             return Math.pow(2, -10 * t) * Math.sin((t - p / 4) * (2 * Math.PI) / p) + 1;
@@ -80,7 +78,6 @@ export const applyEasing = (t: number, type: EasingType): number => {
     }
 };
 
-// Ramer-Douglas-Peucker simplification
 export const simplifyPoints = (points: Point[], tolerance: number): Point[] => {
   if (points.length <= 2 || tolerance <= 0) return points;
 
@@ -91,7 +88,6 @@ export const simplifyPoints = (points: Point[], tolerance: number): Point[] => {
 
   for (let i = 1; i < points.length - 1; i++) {
     const p = points[i];
-    // Perpendicular distance
     let d = 0;
     const dx = end.x - start.x;
     const dy = end.y - start.y;
@@ -127,18 +123,15 @@ export const simplifyPoints = (points: Point[], tolerance: number): Point[] => {
   }
 };
 
-// Chaikin's Smoothing Algorithm
 export const smoothPoints = (points: Point[], iterations: number): Point[] => {
   if (iterations <= 0 || points.length < 3) return points;
   
   let current = points;
   for (let k = 0; k < iterations; k++) {
-    const next: Point[] = [current[0]]; // Always keep start
+    const next: Point[] = [current[0]];
     for (let i = 0; i < current.length - 1; i++) {
       const p0 = current[i];
       const p1 = current[i + 1];
-      
-      // Cut corners at 25% and 75%
       next.push({
         x: 0.75 * p0.x + 0.25 * p1.x,
         y: 0.75 * p0.y + 0.25 * p1.y
@@ -148,32 +141,35 @@ export const smoothPoints = (points: Point[], iterations: number): Point[] => {
         y: 0.25 * p0.y + 0.75 * p1.y
       });
     }
-    next.push(current[current.length - 1]); // Always keep end
+    next.push(current[current.length - 1]);
     current = next;
   }
   return current;
 };
 
 export const processPoints = (points: Point[], smoothing: number, simplification: number): Point[] => {
+  if (!points || points.length === 0) return [];
   const simplified = simplifyPoints(points, simplification);
   const smoothed = smoothPoints(simplified, Math.floor(smoothing));
   return smoothed;
 };
 
-// Pre-calculate the Ribbon (Left/Right polygon edges) for the entire stroke
-export const computeRibbon = (points: Point[], settings: { width: number, taper: number, taperEasing?: EasingType }): PrecomputedRibbon => {
+export const computeRibbon = (
+    points: Point[], 
+    settings: { width: number, taper: number, taperEasing?: string | EasingType }
+): PrecomputedRibbon => {
+    if (!points || points.length < 2) return { left: [], right: [], cumulativeLengths: [] };
+
     const left: Point[] = [];
     const right: Point[] = [];
     const cumulativeLengths: number[] = [0];
     
-    // Bounds tracking
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     
-    if (points.length < 2) return { left: [], right: [], cumulativeLengths: [] };
-
     const totalLength = getPathLength(points);
-    const taperLen = totalLength * (settings.taper / 100);
+    const taperLen = totalLength * ((settings.taper || 0) / 100);
     const baseWidth = settings.width;
+    const easingType = settings.taperEasing || 'LINEAR';
 
     let currentDist = 0;
 
@@ -200,7 +196,6 @@ export const computeRibbon = (points: Point[], settings: { width: number, taper:
             dx = p.x - prev.x;
             dy = p.y - prev.y;
         } else {
-            // Average normal for smooth joins
             const prev = points[i-1];
             const next = points[i+1];
             dx = next.x - prev.x;
@@ -226,12 +221,11 @@ export const computeRibbon = (points: Point[], settings: { width: number, taper:
             }
             
             if (t >= 0) {
-                 const easing = settings.taperEasing || EasingType.LINEAR;
-                 const easedT = applyEasing(t, easing);
+                 const easedT = applyEasing(t, easingType);
                  currentWidth = baseWidth * easedT;
             }
         }
-        currentWidth = Math.max(0.1, currentWidth); // Ensure it doesn't disappear completely for logic
+        currentWidth = Math.max(0.1, currentWidth); 
         const halfWidth = currentWidth / 2;
 
         const lx = p.x + nx * halfWidth;
@@ -242,7 +236,6 @@ export const computeRibbon = (points: Point[], settings: { width: number, taper:
         left.push({ x: lx, y: ly });
         right.push({ x: rx, y: ry });
 
-        // Update Bounds
         minX = Math.min(minX, lx, rx);
         maxX = Math.max(maxX, lx, rx);
         minY = Math.min(minY, ly, ry);

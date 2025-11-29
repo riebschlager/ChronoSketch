@@ -34,7 +34,7 @@ const drawCap = (
   color: string,
   isStart: boolean
 ) => {
-   if (type === CapType.BUTT) return;
+   if (!type || type === CapType.BUTT) return;
 
    const mx = (pLeft.x + pRight.x) / 2;
    const my = (pLeft.y + pRight.y) / 2;
@@ -45,16 +45,9 @@ const drawCap = (
 
    if (r < 0.1) return;
 
-   // Start Cap points Backward relative to path flow.
-   // Vector L->R is perpendicular to path.
-   // Forward along path is (dy, -dx)
-   // Start Cap Direction (Backward) = (-dy, dx)
-   // End Cap Direction (Forward) = (dy, -dx)
-   
    let nx = dy;
    let ny = -dx;
    
-   // Normalize
    const len = Math.sqrt(nx*nx + ny*ny);
    if (len === 0) return;
    nx /= len;
@@ -273,7 +266,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           if (isDrawing) {
             const lastPoint = currentPathRef.current[currentPathRef.current.length - 1];
             if (lastPoint) {
-                // Optimization: distSq is simpler here
                 const dx = lastPoint.x - point.x;
                 const dy = lastPoint.y - point.y;
                 if (dx*dx + dy*dy > 4) {
@@ -300,7 +292,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     handleEnd();
   };
 
-  // OPTIMIZED RENDERER: Uses pre-calculated geometry (Ribbon)
   const renderStrokePath = (
     ctx: CanvasRenderingContext2D, 
     precomputed: PrecomputedRibbon,
@@ -376,7 +367,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         const dg = endRgb.g - startRgb.g;
         const db = endRgb.b - startRgb.b;
 
-        // Calculate cap colors based on position
         const tStart = Math.max(0, Math.min(1, startLength / totalLength));
         const rS = Math.round(startRgb.r + dr * tStart);
         const gS = Math.round(startRgb.g + dg * tStart);
@@ -462,7 +452,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         ctx.fill();
     }
 
-    // DRAW CAPS
     drawCap(ctx, {x: pStartLeftX, y: pStartLeftY}, {x: pStartRightX, y: pStartRightY}, capStart, startCapColor, true);
     drawCap(ctx, {x: pEndLeftX, y: pEndLeftY}, {x: pEndRightX, y: pEndRightY}, capEnd, endCapColor, false);
 
@@ -757,145 +746,147 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         animationFrameRef.current = requestAnimationFrame(renderLoop);
         return;
     }
-    
-    const perfStart = performance.now();
-    const settings = currentSettingsRef.current;
-    const isDrawingState = isDrawingRef.current;
-    const selectedId = selectedStrokeIdRef.current;
-    const isHovered = isUIHoveredRef.current;
-    const isDebug = showDebugRef.current;
-    const currentSpeed = globalSpeedRef.current;
-    const currentStrokes = strokesRef.current;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    if (settings.orbit.enabled) {
-        const mouse = mousePosRef.current;
-        if (mouse || isDrawingState) {
-            const target = mouse || physicsStateRef.current.pos;
-            const mass = Math.max(0.1, settings.orbit.mass);
-            const k = 0.1 / mass; 
-            const friction = settings.orbit.friction;
+    try {
+        const perfStart = performance.now();
+        const settings = currentSettingsRef.current;
+        const isDrawingState = isDrawingRef.current;
+        const selectedId = selectedStrokeIdRef.current;
+        const isHovered = isUIHoveredRef.current;
+        const isDebug = showDebugRef.current;
+        const currentSpeed = globalSpeedRef.current;
+        const currentStrokes = strokesRef.current;
 
-            const dx = target.x - physicsStateRef.current.pos.x;
-            const dy = target.y - physicsStateRef.current.pos.y;
-            
-            const ax = dx * k;
-            const ay = dy * k;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (settings.orbit.enabled) {
+            const mouse = mousePosRef.current;
+            if (mouse || isDrawingState) {
+                const target = mouse || physicsStateRef.current.pos;
+                const mass = Math.max(0.1, settings.orbit.mass);
+                const k = 0.1 / mass; 
+                const friction = settings.orbit.friction;
 
-            physicsStateRef.current.vel.x = (physicsStateRef.current.vel.x + ax) * friction;
-            physicsStateRef.current.vel.y = (physicsStateRef.current.vel.y + ay) * friction;
+                const dx = target.x - physicsStateRef.current.pos.x;
+                const dy = target.y - physicsStateRef.current.pos.y;
+                
+                const ax = dx * k;
+                const ay = dy * k;
 
-            physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
-            physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
-            
-            if (isDrawingState) {
-                const newP = { ...physicsStateRef.current.pos };
-                const lastP = currentPathRef.current[currentPathRef.current.length - 1];
-                // Check distance squared > 1 to avoid duplicates
-                const dxp = lastP ? lastP.x - newP.x : 10;
-                const dyp = lastP ? lastP.y - newP.y : 10;
-                if (!lastP || (dxp*dxp + dyp*dyp > 1)) { 
-                    currentPathRef.current.push(newP);
+                physicsStateRef.current.vel.x = (physicsStateRef.current.vel.x + ax) * friction;
+                physicsStateRef.current.vel.y = (physicsStateRef.current.vel.y + ay) * friction;
+
+                physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
+                physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
+                
+                if (isDrawingState) {
+                    const newP = { ...physicsStateRef.current.pos };
+                    const lastP = currentPathRef.current[currentPathRef.current.length - 1];
+                    const dxp = lastP ? lastP.x - newP.x : 10;
+                    const dyp = lastP ? lastP.y - newP.y : 10;
+                    if (!lastP || (dxp*dxp + dyp*dyp > 1)) { 
+                        currentPathRef.current.push(newP);
+                    }
                 }
             }
+        } else {
+            if (mousePosRef.current) {
+                physicsStateRef.current.pos = { ...mousePosRef.current };
+                physicsStateRef.current.vel = { x: 0, y: 0 };
+            }
         }
-    } else {
-        if (mousePosRef.current) {
-            physicsStateRef.current.pos = { ...mousePosRef.current };
-            physicsStateRef.current.vel = { x: 0, y: 0 };
-        }
-    }
 
-    if (lastTimeRef.current === 0) {
+        if (lastTimeRef.current === 0) {
+            lastTimeRef.current = time;
+        }
+        let deltaSeconds = (time - lastTimeRef.current) / 1000;
+        if (deltaSeconds > 0.5) deltaSeconds = 0.016; 
+
         lastTimeRef.current = time;
-    }
-    // Protect against weird time jumps
-    let deltaSeconds = (time - lastTimeRef.current) / 1000;
-    if (deltaSeconds > 0.5) deltaSeconds = 0.016; // Cap at 500ms lag
-
-    lastTimeRef.current = time;
-    
-    scaledTimeRef.current += deltaSeconds * currentSpeed;
-    const sec = scaledTimeRef.current;
-    
-    animationTimeRef.current = sec;
-
-    currentStrokes.forEach(stroke => {
-      if (stroke.precomputed) {
-          renderSymmetries(ctx, stroke, canvas.width, canvas.height, sec, stroke.id === selectedId);
-      }
-    });
-
-    if (isDrawingState && currentPathRef.current.length > 1) {
-        const points = currentPathRef.current;
-        const tempTotalLength = getPathLength(points);
         
-        const previewRibbon = computeRibbon(points, { 
-            width: settings.width, 
-            taper: settings.taper || 0,
-            taperEasing: settings.taperEasing
+        scaledTimeRef.current += deltaSeconds * currentSpeed;
+        const sec = scaledTimeRef.current;
+        
+        animationTimeRef.current = sec;
+
+        currentStrokes.forEach(stroke => {
+          if (stroke.precomputed) {
+              renderSymmetries(ctx, stroke, canvas.width, canvas.height, sec, stroke.id === selectedId);
+          }
         });
 
-        const previewStroke: Stroke = {
-            ...settings,
-            capStart: settings.capStart || CapType.BUTT,
-            capEnd: settings.capEnd || CapType.BUTT,
-            smoothing: 0, 
-            simplification: 0, 
-            id: 'preview',
-            points: points,
-            rawPoints: points,
-            totalLength: tempTotalLength,
-            timestamp: Date.now(),
-            precomputed: previewRibbon
-        };
-        renderSymmetries(ctx, previewStroke, canvas.width, canvas.height, sec, false, true);
-    }
-
-    if ((mousePosRef.current && !isHovered) || (settings.orbit.enabled && !isHovered)) {
-         renderGhostCursor(ctx, canvas.width, canvas.height, mousePosRef.current || {x:0,y:0});
-    }
-
-    const perfEnd = performance.now();
-    const renderDuration = perfEnd - perfStart;
-
-    if (isDebug && debugPanelRef.current) {
-        const s = statsRef.current;
-        s.frameCount++;
-        s.renderTimeAccumulator += renderDuration;
-
-        if (time - s.lastTime >= 500) {
-            s.fps = Math.round((s.frameCount * 1000) / (time - s.lastTime));
-            s.minFps = Math.min(s.minFps, s.fps);
-            s.maxFps = Math.max(s.maxFps, s.fps);
-            s.lastRenderTime = s.renderTimeAccumulator / s.frameCount;
+        if (isDrawingState && currentPathRef.current.length > 1) {
+            const points = currentPathRef.current;
+            const tempTotalLength = getPathLength(points);
             
-            s.frameCount = 0;
-            s.renderTimeAccumulator = 0;
-            s.lastTime = time;
+            const previewRibbon = computeRibbon(points, { 
+                width: settings.width, 
+                taper: settings.taper || 0,
+                taperEasing: settings.taperEasing
+            });
 
-            const totalPoints = currentStrokes.reduce((acc, str) => acc + str.points.length, 0);
-            const res = `${canvas.width}x${canvas.height}`;
-            const mem = (performance as any).memory ? Math.round((performance as any).memory.usedJSHeapSize / 1024 / 1024) + 'MB' : 'N/A';
-            const mouse = mousePosRef.current ? `${Math.round(mousePosRef.current.x)},${Math.round(mousePosRef.current.y)}` : 'N/A';
-            
-            debugPanelRef.current.innerText = 
-`DEBUG METRICS
-----------------
-FPS: ${s.fps} (Min: ${s.minFps}, Max: ${s.maxFps})
-Frame Time: ${s.lastRenderTime.toFixed(2)}ms
-Resolution: ${res}
-Strokes: ${currentStrokes.length}
-Total Points: ${totalPoints}
-Memory: ${mem}
-Cursor: ${mouse}
-Render Scale: ${currentSpeed.toFixed(1)}x`;
+            const previewStroke: Stroke = {
+                ...settings,
+                capStart: settings.capStart || CapType.BUTT,
+                capEnd: settings.capEnd || CapType.BUTT,
+                smoothing: 0, 
+                simplification: 0, 
+                id: 'preview',
+                points: points,
+                rawPoints: points,
+                totalLength: tempTotalLength,
+                timestamp: Date.now(),
+                precomputed: previewRibbon
+            };
+            renderSymmetries(ctx, previewStroke, canvas.width, canvas.height, sec, false, true);
         }
+
+        if ((mousePosRef.current && !isHovered) || (settings.orbit.enabled && !isHovered)) {
+             renderGhostCursor(ctx, canvas.width, canvas.height, mousePosRef.current || {x:0,y:0});
+        }
+
+        const perfEnd = performance.now();
+        const renderDuration = perfEnd - perfStart;
+
+        if (isDebug && debugPanelRef.current) {
+            const s = statsRef.current;
+            s.frameCount++;
+            s.renderTimeAccumulator += renderDuration;
+
+            if (time - s.lastTime >= 500) {
+                s.fps = Math.round((s.frameCount * 1000) / (time - s.lastTime));
+                s.minFps = Math.min(s.minFps, s.fps);
+                s.maxFps = Math.max(s.maxFps, s.fps);
+                s.lastRenderTime = s.renderTimeAccumulator / s.frameCount;
+                
+                s.frameCount = 0;
+                s.renderTimeAccumulator = 0;
+                s.lastTime = time;
+
+                const totalPoints = currentStrokes.reduce((acc, str) => acc + str.points.length, 0);
+                const res = `${canvas.width}x${canvas.height}`;
+                const mem = (performance as any).memory ? Math.round((performance as any).memory.usedJSHeapSize / 1024 / 1024) + 'MB' : 'N/A';
+                const mouse = mousePosRef.current ? `${Math.round(mousePosRef.current.x)},${Math.round(mousePosRef.current.y)}` : 'N/A';
+                
+                debugPanelRef.current.innerText = 
+    `DEBUG METRICS
+    ----------------
+    FPS: ${s.fps} (Min: ${s.minFps}, Max: ${s.maxFps})
+    Frame Time: ${s.lastRenderTime.toFixed(2)}ms
+    Resolution: ${res}
+    Strokes: ${currentStrokes.length}
+    Total Points: ${totalPoints}
+    Memory: ${mem}
+    Cursor: ${mouse}
+    Render Scale: ${currentSpeed.toFixed(1)}x`;
+            }
+        }
+    } catch (e) {
+        console.error("Render Loop Error:", e);
     }
 
     animationFrameRef.current = requestAnimationFrame(renderLoop);
-  }, []); // Empty dependency array for stability!
+  }, []); 
 
   useEffect(() => {
     animationFrameRef.current = requestAnimationFrame(renderLoop);

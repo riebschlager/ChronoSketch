@@ -350,9 +350,8 @@ function App() {
               }
 
               // --- SVG Cap Logic ---
-              // Reuse logic from drawCap in DrawingCanvas
               const drawSvgCap = (pLeft: Point, pRight: Point, type: CapType, color: string, isStart: boolean) => {
-                  if (type === CapType.BUTT) return '';
+                  if (!type || type === CapType.BUTT) return '';
                   const mx = (pLeft.x + pRight.x) / 2;
                   const my = (pLeft.y + pRight.y) / 2;
                   const dx = pRight.x - pLeft.x;
@@ -383,9 +382,7 @@ function App() {
                   return '';
               };
 
-              // Start Cap
               paths += drawSvgCap({x: pStartLeftX, y: pStartLeftY}, {x: pStartRightX, y: pStartRightY}, stroke.capStart || CapType.BUTT, startCapColor, true);
-              // End Cap
               paths += drawSvgCap({x: pEndLeftX, y: pEndLeftY}, {x: pEndRightX, y: pEndRightY}, stroke.capEnd || CapType.BUTT, endCapColor, false);
 
               
