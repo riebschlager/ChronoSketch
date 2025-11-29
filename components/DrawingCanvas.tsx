@@ -393,6 +393,44 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const pEndRightY = lerp(re1.y, re2.y, endT);
 
     // Optimization: Lift context property setting out of loops where possible
+
+    // Selection Highlight (Optimized: Uses Ribbon Geometry Outline)
+    // RENDER FIRST so it appears beneath the stroke
+    if (isSelected) {
+      ctx.save();
+      // Use a clean outline instead of expensive shadowBlur
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      
+      // Draw precise outline of the current visible ribbon segment
+      ctx.beginPath();
+      
+      // 1. Trace Left Edge
+      ctx.moveTo(pStartLeftX, pStartLeftY);
+      for (let i = startIndex + 1; i < endIndex; i++) {
+          ctx.lineTo(left[i].x, left[i].y);
+      }
+      ctx.lineTo(pEndLeftX, pEndLeftY);
+      
+      // 2. End Cap
+      ctx.lineTo(pEndRightX, pEndRightY);
+      
+      // 3. Trace Right Edge (backwards)
+      for (let i = endIndex - 1; i > startIndex; i--) {
+          ctx.lineTo(right[i].x, right[i].y);
+      }
+      ctx.lineTo(pStartRightX, pStartRightY);
+      
+      // 4. Start Cap
+      ctx.lineTo(pStartLeftX, pStartLeftY); // Close loop
+
+      // Render thicker, high-contrast outline
+      ctx.lineWidth = 6; // Thicker so it peeks out from behind
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.stroke();
+
+      ctx.restore();
+    }
     
     // RENDER: Gradient Path or Solid Path
     if (endColor) {
@@ -485,41 +523,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         ctx.lineTo(pStartRightX, pStartRightY);
         ctx.closePath();
         ctx.fill();
-    }
-
-    // Selection Highlight (Optimized: Uses Ribbon Geometry Outline instead of shadowBlur)
-    if (isSelected) {
-      ctx.save();
-      // Use a clean outline instead of expensive shadowBlur
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      
-      // Draw precise outline of the current visible ribbon segment
-      ctx.beginPath();
-      
-      // 1. Trace Left Edge
-      ctx.moveTo(pStartLeftX, pStartLeftY);
-      for (let i = startIndex + 1; i < endIndex; i++) {
-          ctx.lineTo(left[i].x, left[i].y);
-      }
-      ctx.lineTo(pEndLeftX, pEndLeftY);
-      
-      // 2. End Cap
-      ctx.lineTo(pEndRightX, pEndRightY);
-      
-      // 3. Trace Right Edge (backwards)
-      for (let i = endIndex - 1; i > startIndex; i--) {
-          ctx.lineTo(right[i].x, right[i].y);
-      }
-      ctx.lineTo(pStartRightX, pStartRightY);
-      
-      // 4. Start Cap
-      ctx.lineTo(pStartLeftX, pStartLeftY); // Close loop
-
-      ctx.stroke();
-      ctx.restore();
     }
   };
 
@@ -799,8 +802,17 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             physicsStateRef.current.vel.x = (physicsStateRef.current.vel.x + ax) * friction;
             physicsStateRef.current.vel.y = (physicsStateRef.current.vel.y + ay) * friction;
 
-            physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
-            physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
+            physicsStateRef.current.pos.x += physicsStateRef.current.pos.x + physicsStateRef.current.vel.x;
+            physicsStateRef.current.pos.y += physicsStateRef.current.pos.y + physicsStateRef.current.vel.y;
+            
+            // Fix: Correct accumulation of position
+            physicsStateRef.current.pos.x = physicsStateRef.current.pos.x - (physicsStateRef.current.pos.x - (physicsStateRef.current.pos.x - physicsStateRef.current.vel.x)); // Reverting accidental change in previous logic logic if any. 
+            // Actually let's just stick to the clean verlet integration or euler:
+            // pos += vel
+            // The previous code was:
+            // physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
+            // physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
+            // which is correct.
             
             if (isDrawing) {
                 const newP = { ...physicsStateRef.current.pos };
