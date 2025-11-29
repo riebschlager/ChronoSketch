@@ -99,7 +99,7 @@ const processPoints = (points: Point[], smoothing: number, simplification: numbe
 };
 
 // Pre-calculate the Ribbon (Left/Right polygon edges) for the entire stroke
-export const computeRibbon = (points: Point[], settings: { width: number, taper: number }): PrecomputedRibbon => {
+export const computeRibbon = (points: Point[], settings: { width: number, taper: number, taperEasing?: EasingType }): PrecomputedRibbon => {
     const left: Point[] = [];
     const right: Point[] = [];
     const cumulativeLengths: number[] = [0];
@@ -152,10 +152,17 @@ export const computeRibbon = (points: Point[], settings: { width: number, taper:
 
         let currentWidth = baseWidth;
         if (taperLen > 0) {
+            let t = -1;
             if (currentDist < taperLen) {
-                currentWidth = baseWidth * (currentDist / taperLen);
+                t = currentDist / taperLen;
             } else if (currentDist > totalLength - taperLen) {
-                currentWidth = baseWidth * ((totalLength - currentDist) / taperLen);
+                t = (totalLength - currentDist) / taperLen;
+            }
+            
+            if (t >= 0) {
+                 const easing = settings.taperEasing || EasingType.LINEAR;
+                 const easedT = applyEasing(t, easing);
+                 currentWidth = baseWidth * easedT;
             }
         }
         currentWidth = Math.max(0.1, currentWidth); // Ensure it doesn't disappear completely for logic
@@ -201,6 +208,7 @@ function App() {
     endColor: undefined, 
     width: 4,
     taper: 0, 
+    taperEasing: EasingType.LINEAR,
     capStart: CapType.ROUND,
     capEnd: CapType.ROUND,
     smoothing: 0, 
@@ -249,7 +257,7 @@ function App() {
                 }
 
                 const needsPointProcess = updates.smoothing !== undefined || updates.simplification !== undefined;
-                const needsRibbonRecalc = needsPointProcess || updates.width !== undefined || updates.taper !== undefined;
+                const needsRibbonRecalc = needsPointProcess || updates.width !== undefined || updates.taper !== undefined || updates.taperEasing !== undefined;
 
                 if (needsPointProcess) {
                     const newPoints = processPoints(
@@ -264,7 +272,8 @@ function App() {
                 if (needsRibbonRecalc) {
                     mergedSettings.precomputed = computeRibbon(mergedSettings.points, {
                         width: mergedSettings.width,
-                        taper: mergedSettings.taper
+                        taper: mergedSettings.taper,
+                        taperEasing: mergedSettings.taperEasing
                     });
                 }
                 
@@ -289,7 +298,11 @@ function App() {
   const handleAddStroke = (rawPoints: Point[]) => {
     const processedPoints = processPoints(rawPoints, currentSettings.smoothing, currentSettings.simplification);
     
-    const ribbon = computeRibbon(processedPoints, { width: currentSettings.width, taper: currentSettings.taper });
+    const ribbon = computeRibbon(processedPoints, { 
+      width: currentSettings.width, 
+      taper: currentSettings.taper,
+      taperEasing: currentSettings.taperEasing
+    });
 
     const newStroke: Stroke = {
       ...currentSettings,
@@ -654,13 +667,15 @@ function App() {
                         
                         // Re-process points based on stored raw points and settings
                         const processedPoints = processPoints(rawPoints, smoothing, simplification);
-                        const ribbon = computeRibbon(processedPoints, { width: s.width, taper: s.taper || 0 });
+                        const taperEasing = s.taperEasing || EasingType.LINEAR;
+                        const ribbon = computeRibbon(processedPoints, { width: s.width, taper: s.taper || 0, taperEasing });
                         
                         return {
                              ...s,
                              rawPoints,
                              points: processedPoints,
-                             precomputed: ribbon
+                             precomputed: ribbon,
+                             taperEasing
                         };
                     });
                     setStrokes(fixedStrokes);

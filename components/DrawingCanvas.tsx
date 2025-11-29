@@ -867,7 +867,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         
         const previewRibbon = computeRibbon(points, { 
             width: currentSettings.width, 
-            taper: currentSettings.taper || 0 
+            taper: currentSettings.taper || 0,
+            taperEasing: currentSettings.taperEasing
         });
 
         const previewStroke: Stroke = {

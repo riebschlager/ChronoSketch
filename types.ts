@@ -62,6 +62,7 @@ export interface StrokeSettings {
   capStart: CapType;
   capEnd: CapType;
   taper: number; // 0-100 represents percentage of length tapered on each end
+  taperEasing: EasingType;
   smoothing: number; // 0-5 iterations
   simplification: number; // 0-20 pixel tolerance
   speed: number; // Cycles per second

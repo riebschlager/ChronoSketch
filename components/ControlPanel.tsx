@@ -536,19 +536,37 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
                   <div className="bg-slate-800/30 rounded-lg p-2 space-y-2 border border-slate-800/50">
                       <div>
-                          <label className="flex justify-between text-[10px] text-slate-500 mb-1">
-                            <span>Taper</span>
-                            <span>{settings.taper ? settings.taper : 0}%</span>
-                          </label>
-                          <input 
-                            type="range" 
-                            min="0" 
-                            max="50" 
-                            step="5"
-                            value={settings.taper || 0}
-                            onChange={(e) => updateSetting('taper', Number(e.target.value))}
-                            className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-teal-500'}`}
-                          />
+                          <div className="flex justify-between items-end mb-1">
+                            <label className="text-[10px] text-slate-500">Taper</label>
+                            <span className="text-[10px] text-slate-500">{settings.taper ? settings.taper : 0}%</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                              <input 
+                                type="range" 
+                                min="0" 
+                                max="50" 
+                                step="5"
+                                value={settings.taper || 0}
+                                onChange={(e) => updateSetting('taper', Number(e.target.value))}
+                                className={`flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-teal-500'}`}
+                              />
+                              <div className="w-20">
+                                  <select
+                                      value={settings.taperEasing || EasingType.LINEAR}
+                                      onChange={(e) => updateSetting('taperEasing', e.target.value as EasingType)}
+                                      disabled={!settings.taper}
+                                      className="w-full bg-slate-800 text-[9px] text-slate-300 border border-slate-700 rounded py-0.5 px-1 focus:outline-none focus:border-cyan-500 cursor-pointer disabled:opacity-50"
+                                      title="Taper Easing"
+                                  >
+                                      <option value={EasingType.LINEAR}>Linear</option>
+                                      <option value={EasingType.EASE_IN}>In</option>
+                                      <option value={EasingType.EASE_OUT}>Out</option>
+                                      <option value={EasingType.EASE_IN_OUT}>In-Out</option>
+                                      <option value={EasingType.SINE}>Sine</option>
+                                  </select>
+                              </div>
+                          </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-3 pt-1">
