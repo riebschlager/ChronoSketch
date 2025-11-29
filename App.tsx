@@ -183,7 +183,7 @@ function App() {
     simplification: 0, // Default no simplification
     speed: 0.5,
     phase: 0,
-    easing: EasingType.LINEAR, // Default easing
+    easing: EasingType.SINE, // Default easing
     animationMode: AnimationMode.FLOW, // Default to the new flow mode
     symmetry: {
       type: SymmetryType.NONE,
