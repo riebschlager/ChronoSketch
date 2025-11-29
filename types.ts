@@ -19,6 +19,15 @@ export enum AnimationMode {
   FLOW = 'FLOW',    // Draw 0->100, then Undraw 0->100 (Erasure follows tip)
 }
 
+export enum EasingType {
+  LINEAR = 'LINEAR',
+  EASE_IN = 'EASE_IN',
+  EASE_OUT = 'EASE_OUT',
+  EASE_IN_OUT = 'EASE_IN_OUT',
+  SINE = 'SINE',
+  ELASTIC = 'ELASTIC'
+}
+
 export interface SymmetrySettings {
   type: SymmetryType;
   copies: number; // For Radial
@@ -41,6 +50,7 @@ export interface StrokeSettings {
   simplification: number; // 0-20 pixel tolerance
   speed: number; // Cycles per second
   phase: number; // 0-1 offset
+  easing: EasingType;
   symmetry: SymmetrySettings;
   animationMode: AnimationMode;
   orbit: OrbitSettings;

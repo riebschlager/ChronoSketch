@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Stroke, Point, SymmetryType, AnimationMode, PrecomputedRibbon } from '../types';
+import { Stroke, Point, SymmetryType, AnimationMode, PrecomputedRibbon, EasingType } from '../types';
 import { computeRibbon } from '../App'; // Imported for the live preview stroke
 
 interface DrawingCanvasProps {
@@ -64,6 +64,22 @@ const getIndexForLength = (lengths: number[], target: number): number => {
         }
     }
     return ans; 
+};
+
+// Easing Functions
+const applyEasing = (t: number, type: EasingType): number => {
+    switch (type) {
+        case EasingType.LINEAR: return t;
+        case EasingType.EASE_IN: return t * t;
+        case EasingType.EASE_OUT: return t * (2 - t);
+        case EasingType.EASE_IN_OUT: return t < .5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        case EasingType.SINE: return (1 - Math.cos(t * Math.PI)) / 2;
+        case EasingType.ELASTIC: 
+            if (t === 0 || t === 1) return t;
+            const p = 0.3;
+            return Math.pow(2, -10 * t) * Math.sin((t - p / 4) * (2 * Math.PI) / p) + 1;
+        default: return t;
+    }
 };
 
 const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ 
@@ -378,7 +394,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     isSelected: boolean,
     forceFullDraw: boolean = false
   ) => {
-    const { symmetry, color, endColor, width: strokeWidth, points, totalLength, animationMode, precomputed } = stroke;
+    const { symmetry, color, endColor, width: strokeWidth, points, totalLength, animationMode, precomputed, easing } = stroke;
     const centerX = width / 2;
     const centerY = height / 2;
 
@@ -407,23 +423,33 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             if (animationMode === AnimationMode.YOYO) {
                  let cycle = totalPhase % 2;
                  if (cycle < 0) cycle += 2;
-                 const localProgress = cycle > 1 ? 2 - cycle : cycle;
-                 localEnd = totalLength * localProgress;
+                 // Easing applies to the 0-1 normalized progress
+                 const rawProgress = cycle > 1 ? 2 - cycle : cycle;
+                 const easedProgress = applyEasing(rawProgress, easing || EasingType.LINEAR);
+                 
+                 localEnd = totalLength * easedProgress;
                  localStart = 0;
             } else if (animationMode === AnimationMode.FLOW) {
                  let cycle = totalPhase % 2;
                  if (cycle < 0) cycle += 2;
                  if (cycle <= 1) {
+                     // Draw phase
                      localStart = 0;
-                     localEnd = totalLength * cycle;
+                     const easedProgress = applyEasing(cycle, easing || EasingType.LINEAR);
+                     localEnd = totalLength * easedProgress;
                  } else {
-                     localStart = totalLength * (cycle - 1);
+                     // Erase phase
+                     const easedProgress = applyEasing(cycle - 1, easing || EasingType.LINEAR);
+                     localStart = totalLength * easedProgress;
                      localEnd = totalLength;
                  }
             } else {
-                 let localProgress = totalPhase % 1;
-                 if (localProgress < 0) localProgress += 1;
-                 localEnd = totalLength * localProgress;
+                 // LOOP
+                 let rawProgress = totalPhase % 1;
+                 if (rawProgress < 0) rawProgress += 1;
+                 const easedProgress = applyEasing(rawProgress, easing || EasingType.LINEAR);
+                 
+                 localEnd = totalLength * easedProgress;
                  localStart = 0;
             }
         }

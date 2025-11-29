@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import DrawingCanvas from './components/DrawingCanvas';
 import ControlPanel from './components/ControlPanel';
-import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings } from './types';
+import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings, EasingType } from './types';
 
 // --- Geometry Helpers ---
 
@@ -183,6 +183,7 @@ function App() {
     simplification: 0, // Default no simplification
     speed: 0.5,
     phase: 0,
+    easing: EasingType.LINEAR, // Default easing
     animationMode: AnimationMode.FLOW, // Default to the new flow mode
     symmetry: {
       type: SymmetryType.NONE,
@@ -377,6 +378,7 @@ function App() {
                             width,
                             totalLength: getPathLength(points),
                             orbit: s.orbit || { enabled: false, mass: 2, friction: 0.95 },
+                            easing: s.easing || EasingType.LINEAR,
                             // Hydrate the precomputed ribbon
                             precomputed: computeRibbon(points, { width, taper })
                         };

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Stroke, SymmetryType, AnimationMode, Point } from '../types';
+import { Stroke, SymmetryType, AnimationMode, Point, EasingType } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
 import { 
   Trash2, 
@@ -580,6 +580,23 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                         onChange={(e) => updateSetting('phase', Number(e.target.value))}
                         className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-blue-500'}`}
                       />
+                  </div>
+                  
+                  {/* Easing Selector */}
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Easing</div>
+                    <select
+                        value={settings.easing || EasingType.LINEAR}
+                        onChange={(e) => updateSetting('easing', e.target.value as EasingType)}
+                        className="w-full bg-slate-800 text-xs text-slate-300 border border-slate-700 rounded p-2 focus:outline-none focus:border-cyan-500"
+                    >
+                        <option value={EasingType.LINEAR}>Linear</option>
+                        <option value={EasingType.EASE_IN}>Ease In</option>
+                        <option value={EasingType.EASE_OUT}>Ease Out</option>
+                        <option value={EasingType.EASE_IN_OUT}>Ease In-Out</option>
+                        <option value={EasingType.SINE}>Smooth Sine</option>
+                        <option value={EasingType.ELASTIC}>Elastic</option>
+                    </select>
                   </div>
 
                   <div className="flex gap-1 bg-slate-900 rounded p-1">
