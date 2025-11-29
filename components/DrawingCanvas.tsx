@@ -222,13 +222,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       if (symmetry.type === SymmetryType.GRID) {
         const gap = symmetry.gridGap || 100;
-        // BBox Optimization for Grid Hit Testing:
-        // Instead of testing a generic range, only test if the input point shifted into the stroke's local space 
-        // lands near the stroke. However, since the grid replicates the stroke everywhere, we can just 
-        // modulo the input coordinate to bring it into a single "cell" relative to the stroke's origin?
-        // Not quite, because the stroke can span multiple cells.
-        // Fallback to the loop range check but keep it somewhat tight.
-        
         const rangeX = Math.ceil(width / gap) + 1;
         const rangeY = Math.ceil(height / gap) + 1;
 
@@ -494,27 +487,37 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         ctx.fill();
     }
 
-    // Selection Highlight (Draws the spine)
+    // Selection Highlight (Optimized: Uses Ribbon Geometry Outline instead of shadowBlur)
     if (isSelected) {
       ctx.save();
-      ctx.shadowColor = 'white';
-      ctx.shadowBlur = 10;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.lineWidth = baseWidth + 4;
+      // Use a clean outline instead of expensive shadowBlur
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      let started = false;
-      let d = 0;
       
-      // Simple loop for spine is acceptable as selection is rare and single
-      for (let i = 0; i < points.length; i++) {
-         if (i>0) d += dist(points[i-1], points[i]);
-         if (d >= startLength && d <= endLength) {
-             if (!started) { ctx.moveTo(points[i].x, points[i].y); started = true; }
-             else ctx.lineTo(points[i].x, points[i].y);
-         }
+      // Draw precise outline of the current visible ribbon segment
+      ctx.beginPath();
+      
+      // 1. Trace Left Edge
+      ctx.moveTo(pStartLeftX, pStartLeftY);
+      for (let i = startIndex + 1; i < endIndex; i++) {
+          ctx.lineTo(left[i].x, left[i].y);
       }
+      ctx.lineTo(pEndLeftX, pEndLeftY);
+      
+      // 2. End Cap
+      ctx.lineTo(pEndRightX, pEndRightY);
+      
+      // 3. Trace Right Edge (backwards)
+      for (let i = endIndex - 1; i > startIndex; i--) {
+          ctx.lineTo(right[i].x, right[i].y);
+      }
+      ctx.lineTo(pStartRightX, pStartRightY);
+      
+      // 4. Start Cap
+      ctx.lineTo(pStartLeftX, pStartLeftY); // Close loop
+
       ctx.stroke();
       ctx.restore();
     }
