@@ -802,17 +802,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             physicsStateRef.current.vel.x = (physicsStateRef.current.vel.x + ax) * friction;
             physicsStateRef.current.vel.y = (physicsStateRef.current.vel.y + ay) * friction;
 
-            physicsStateRef.current.pos.x += physicsStateRef.current.pos.x + physicsStateRef.current.vel.x;
-            physicsStateRef.current.pos.y += physicsStateRef.current.pos.y + physicsStateRef.current.vel.y;
-            
-            // Fix: Correct accumulation of position
-            physicsStateRef.current.pos.x = physicsStateRef.current.pos.x - (physicsStateRef.current.pos.x - (physicsStateRef.current.pos.x - physicsStateRef.current.vel.x)); // Reverting accidental change in previous logic logic if any. 
-            // Actually let's just stick to the clean verlet integration or euler:
-            // pos += vel
-            // The previous code was:
-            // physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
-            // physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
-            // which is correct.
+            // Corrected Euler integration: pos += vel
+            physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
+            physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
             
             if (isDrawing) {
                 const newP = { ...physicsStateRef.current.pos };
