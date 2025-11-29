@@ -3,7 +3,6 @@ import { Stroke, Point, SymmetryType, AnimationMode, PrecomputedRibbon, EasingTy
 import { 
     computeRibbon, 
     distSq, 
-    dist, 
     distToSegment, 
     getPathLength, 
     lerp, 
@@ -100,6 +99,24 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const [isDrawing, setIsDrawing] = useState(false);
   const currentPathRef = useRef<Point[]>([]);
   
+  // Refs for loop access to avoid dependency churn
+  const currentSettingsRef = useRef(currentSettings);
+  const selectedStrokeIdRef = useRef(selectedStrokeId);
+  const isUIHoveredRef = useRef(isUIHovered);
+  const isDrawingRef = useRef(isDrawing);
+  const globalSpeedRef = useRef(globalSpeed);
+  const strokesRef = useRef<Stroke[]>(strokes);
+  const showDebugRef = useRef(showDebug);
+
+  // Sync refs
+  useEffect(() => { currentSettingsRef.current = currentSettings; }, [currentSettings]);
+  useEffect(() => { selectedStrokeIdRef.current = selectedStrokeId; }, [selectedStrokeId]);
+  useEffect(() => { isUIHoveredRef.current = isUIHovered; }, [isUIHovered]);
+  useEffect(() => { isDrawingRef.current = isDrawing; }, [isDrawing]);
+  useEffect(() => { globalSpeedRef.current = globalSpeed; }, [globalSpeed]);
+  useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+  useEffect(() => { showDebugRef.current = showDebug; }, [showDebug]);
+
   const mousePosRef = useRef<Point | null>(null);
   
   const physicsStateRef = useRef({
@@ -121,16 +138,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     renderTimeAccumulator: 0,
     lastRenderTime: 0
   });
-
-  const globalSpeedRef = useRef(globalSpeed);
-  useEffect(() => {
-    globalSpeedRef.current = globalSpeed;
-  }, [globalSpeed]);
-  
-  const strokesRef = useRef<Stroke[]>(strokes);
-  useEffect(() => {
-    strokesRef.current = strokes;
-  }, [strokes]);
 
   const checkHit = (inputX: number, inputY: number): string | null => {
     const canvas = canvasRef.current;
@@ -261,11 +268,17 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       mousePosRef.current = point;
       
       if (currentSettings.orbit.enabled) {
+          // Physics handles point addition in loop
       } else {
           if (isDrawing) {
             const lastPoint = currentPathRef.current[currentPathRef.current.length - 1];
-            if (lastPoint && distSq(lastPoint, point) > 4) { 
-              currentPathRef.current.push(point);
+            if (lastPoint) {
+                // Optimization: distSq is simpler here
+                const dx = lastPoint.x - point.x;
+                const dy = lastPoint.y - point.y;
+                if (dx*dx + dy*dy > 4) {
+                    currentPathRef.current.push(point);
+                }
             }
           }
       }
@@ -302,7 +315,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     capEnd: CapType,
     isSelected: boolean = false
   ) => {
-    if (precomputed.left.length < 2) return;
+    if (!precomputed || precomputed.left.length < 2) return;
     if (endLength <= startLength) return;
 
     const { left, right, cumulativeLengths } = precomputed;
@@ -406,6 +419,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             ctx.lineTo(curR.x, curR.y);
             ctx.fill();
 
+            // Fill gaps
             ctx.beginPath();
             ctx.moveTo(nextL.x, nextL.y);
             ctx.lineTo(nextR.x, nextR.y);
@@ -454,19 +468,16 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
 
     // Selection Highlight
-    if (isSelected) {
+    if (isSelected && points.length > 0) {
       ctx.save();
-      // Optimization: Removed shadowBlur and expensive distance calculations in loop.
-      // Instead, we use the already calculated indices and simple line drawing.
       
-      const pStartCenter = lerpPoint(points[startIndex], points[startIndex+1], startT);
-      const pEndCenter = lerpPoint(points[idxEndBase], points[idxEndNext], endT);
+      const pStartCenter = lerpPoint(points[startIndex], points[Math.min(startIndex+1, points.length-1)], startT);
+      const pEndCenter = lerpPoint(points[idxEndBase], points[Math.min(idxEndNext, points.length-1)], endT);
 
-      // 1. Draw dashed centerline for precision
       ctx.beginPath();
       ctx.moveTo(pStartCenter.x, pStartCenter.y);
       for (let i = startIndex + 1; i <= idxEndBase; i++) {
-          ctx.lineTo(points[i].x, points[i].y);
+          if (points[i]) ctx.lineTo(points[i].x, points[i].y);
       }
       ctx.lineTo(pEndCenter.x, pEndCenter.y);
       
@@ -476,7 +487,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       ctx.lineCap = 'butt';
       ctx.stroke();
 
-      // 2. Draw subtle transparent halo (simulating glow without expensive blur)
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
       ctx.lineWidth = baseWidth + 4; 
       ctx.setLineDash([]);
@@ -539,7 +549,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             }
         }
         
-        // Pass capStart/capEnd to renderer (defaults to BUTT if undefined)
         renderStrokePath(
             ctx, precomputed, points, localStart, localEnd, totalLength, strokeWidth, color, endColor, 
             capStart || CapType.BUTT, 
@@ -601,7 +610,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
          const gap = symmetry.gridGap || 100;
          if (points.length > 0 && precomputed.bounds) {
              const { minX, maxX, minY, maxY } = precomputed.bounds;
-             const pad = strokeWidth + 50; // Add padding for caps
+             const pad = strokeWidth + 50; 
              
              const startX = Math.floor((-maxX - pad) / gap);
              const endX = Math.ceil((width - minX + pad) / gap);
@@ -624,7 +633,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   const renderGhostCursor = (ctx: CanvasRenderingContext2D, width: number, height: number, actualCursor: Point) => {
     let x, y;
-    if (currentSettings.orbit.enabled) {
+    const settings = currentSettingsRef.current;
+    
+    if (settings.orbit.enabled) {
         x = physicsStateRef.current.pos.x;
         y = physicsStateRef.current.pos.y;
     } else {
@@ -633,12 +644,12 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         y = mousePosRef.current.y;
     }
 
-    const { symmetry, color, width: strokeWidth } = currentSettings;
+    const { symmetry, color, width: strokeWidth } = settings;
     const centerX = width / 2;
     const centerY = height / 2;
     const radius = Math.max(2, strokeWidth / 2);
 
-    if (currentSettings.orbit.enabled && mousePosRef.current) {
+    if (settings.orbit.enabled && mousePosRef.current) {
         ctx.save();
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.lineWidth = 1;
@@ -737,21 +748,34 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   const renderLoop = useCallback((time: number) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) {
+        animationFrameRef.current = requestAnimationFrame(renderLoop);
+        return;
+    }
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+        animationFrameRef.current = requestAnimationFrame(renderLoop);
+        return;
+    }
     
     const perfStart = performance.now();
+    const settings = currentSettingsRef.current;
+    const isDrawingState = isDrawingRef.current;
+    const selectedId = selectedStrokeIdRef.current;
+    const isHovered = isUIHoveredRef.current;
+    const isDebug = showDebugRef.current;
+    const currentSpeed = globalSpeedRef.current;
+    const currentStrokes = strokesRef.current;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    if (currentSettings.orbit.enabled) {
+    if (settings.orbit.enabled) {
         const mouse = mousePosRef.current;
-        if (mouse || isDrawing) {
+        if (mouse || isDrawingState) {
             const target = mouse || physicsStateRef.current.pos;
-            const mass = Math.max(0.1, currentSettings.orbit.mass);
+            const mass = Math.max(0.1, settings.orbit.mass);
             const k = 0.1 / mass; 
-            const friction = currentSettings.orbit.friction;
+            const friction = settings.orbit.friction;
 
             const dx = target.x - physicsStateRef.current.pos.x;
             const dy = target.y - physicsStateRef.current.pos.y;
@@ -765,10 +789,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
             physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
             
-            if (isDrawing) {
+            if (isDrawingState) {
                 const newP = { ...physicsStateRef.current.pos };
                 const lastP = currentPathRef.current[currentPathRef.current.length - 1];
-                if (!lastP || distSq(lastP, newP) > 1) { 
+                // Check distance squared > 1 to avoid duplicates
+                const dxp = lastP ? lastP.x - newP.x : 10;
+                const dyp = lastP ? lastP.y - newP.y : 10;
+                if (!lastP || (dxp*dxp + dyp*dyp > 1)) { 
                     currentPathRef.current.push(newP);
                 }
             }
@@ -783,34 +810,37 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (lastTimeRef.current === 0) {
         lastTimeRef.current = time;
     }
-    const deltaSeconds = (time - lastTimeRef.current) / 1000;
+    // Protect against weird time jumps
+    let deltaSeconds = (time - lastTimeRef.current) / 1000;
+    if (deltaSeconds > 0.5) deltaSeconds = 0.016; // Cap at 500ms lag
+
     lastTimeRef.current = time;
     
-    scaledTimeRef.current += deltaSeconds * globalSpeedRef.current;
+    scaledTimeRef.current += deltaSeconds * currentSpeed;
     const sec = scaledTimeRef.current;
     
     animationTimeRef.current = sec;
 
-    strokesRef.current.forEach(stroke => {
+    currentStrokes.forEach(stroke => {
       if (stroke.precomputed) {
-          renderSymmetries(ctx, stroke, canvas.width, canvas.height, sec, stroke.id === selectedStrokeId);
+          renderSymmetries(ctx, stroke, canvas.width, canvas.height, sec, stroke.id === selectedId);
       }
     });
 
-    if (isDrawing && currentPathRef.current.length > 1) {
+    if (isDrawingState && currentPathRef.current.length > 1) {
         const points = currentPathRef.current;
         const tempTotalLength = getPathLength(points);
         
         const previewRibbon = computeRibbon(points, { 
-            width: currentSettings.width, 
-            taper: currentSettings.taper || 0,
-            taperEasing: currentSettings.taperEasing
+            width: settings.width, 
+            taper: settings.taper || 0,
+            taperEasing: settings.taperEasing
         });
 
         const previewStroke: Stroke = {
-            ...currentSettings,
-            capStart: currentSettings.capStart || CapType.BUTT,
-            capEnd: currentSettings.capEnd || CapType.BUTT,
+            ...settings,
+            capStart: settings.capStart || CapType.BUTT,
+            capEnd: settings.capEnd || CapType.BUTT,
             smoothing: 0, 
             simplification: 0, 
             id: 'preview',
@@ -823,14 +853,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         renderSymmetries(ctx, previewStroke, canvas.width, canvas.height, sec, false, true);
     }
 
-    if ((mousePosRef.current && !isUIHovered) || (currentSettings.orbit.enabled && !isUIHovered)) {
+    if ((mousePosRef.current && !isHovered) || (settings.orbit.enabled && !isHovered)) {
          renderGhostCursor(ctx, canvas.width, canvas.height, mousePosRef.current || {x:0,y:0});
     }
 
     const perfEnd = performance.now();
     const renderDuration = perfEnd - perfStart;
 
-    if (showDebug && debugPanelRef.current) {
+    if (isDebug && debugPanelRef.current) {
         const s = statsRef.current;
         s.frameCount++;
         s.renderTimeAccumulator += renderDuration;
@@ -845,7 +875,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             s.renderTimeAccumulator = 0;
             s.lastTime = time;
 
-            const totalPoints = strokesRef.current.reduce((acc, str) => acc + str.points.length, 0);
+            const totalPoints = currentStrokes.reduce((acc, str) => acc + str.points.length, 0);
             const res = `${canvas.width}x${canvas.height}`;
             const mem = (performance as any).memory ? Math.round((performance as any).memory.usedJSHeapSize / 1024 / 1024) + 'MB' : 'N/A';
             const mouse = mousePosRef.current ? `${Math.round(mousePosRef.current.x)},${Math.round(mousePosRef.current.y)}` : 'N/A';
@@ -856,16 +886,16 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 FPS: ${s.fps} (Min: ${s.minFps}, Max: ${s.maxFps})
 Frame Time: ${s.lastRenderTime.toFixed(2)}ms
 Resolution: ${res}
-Strokes: ${strokesRef.current.length}
+Strokes: ${currentStrokes.length}
 Total Points: ${totalPoints}
 Memory: ${mem}
 Cursor: ${mouse}
-Render Scale: ${globalSpeedRef.current.toFixed(1)}x`;
+Render Scale: ${currentSpeed.toFixed(1)}x`;
         }
     }
 
     animationFrameRef.current = requestAnimationFrame(renderLoop);
-  }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered, showDebug]); 
+  }, []); // Empty dependency array for stability!
 
   useEffect(() => {
     animationFrameRef.current = requestAnimationFrame(renderLoop);

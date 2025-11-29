@@ -187,29 +187,33 @@ export const computeRibbon = (points: Point[], settings: { width: number, taper:
         let nx = 0;
         let ny = 0;
 
+        // Calculate Normal
+        let dx = 0;
+        let dy = 0;
+
         if (i === 0) {
             const next = points[i+1];
-            const dx = next.x - p.x;
-            const dy = next.y - p.y;
-            const len = Math.sqrt(dx*dx + dy*dy) || 1;
-            nx = -dy / len;
-            ny = dx / len;
+            dx = next.x - p.x;
+            dy = next.y - p.y;
         } else if (i === points.length - 1) {
             const prev = points[i-1];
-            const dx = p.x - prev.x;
-            const dy = p.y - prev.y;
-            const len = Math.sqrt(dx*dx + dy*dy) || 1;
-            nx = -dy / len;
-            ny = dx / len;
+            dx = p.x - prev.x;
+            dy = p.y - prev.y;
         } else {
             // Average normal for smooth joins
             const prev = points[i-1];
             const next = points[i+1];
-            const dx = next.x - prev.x;
-            const dy = next.y - prev.y;
-            const len = Math.sqrt(dx*dx + dy*dy) || 1;
+            dx = next.x - prev.x;
+            dy = next.y - prev.y;
+        }
+
+        const len = Math.sqrt(dx*dx + dy*dy);
+        if (len > 0.0001) {
             nx = -dy / len;
             ny = dx / len;
+        } else {
+            nx = 0; 
+            ny = 0; 
         }
 
         let currentWidth = baseWidth;
