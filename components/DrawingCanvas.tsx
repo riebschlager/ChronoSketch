@@ -14,11 +14,12 @@ interface DrawingCanvasProps {
   canvasRef: React.RefObject<HTMLCanvasElement>;
   globalSpeed: number;
   showDebug: boolean;
+  animationTimeRef: React.MutableRefObject<number>;
 }
 
 // --- Helper Functions ---
 
-const hexToRgb = (hex: string) => {
+export const hexToRgb = (hex: string) => {
   // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
   const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
   hex = hex.replace(shorthandRegex, (m, r, g, b) => {
@@ -63,10 +64,10 @@ const lerpPoint = (p1: Point, p2: Point, t: number): Point => ({
     y: p1.y + (p2.y - p1.y) * t
 });
 
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 // Binary search for the highest index i such that arr[i] <= value
-const getIndexForLength = (lengths: number[], target: number): number => {
+export const getIndexForLength = (lengths: number[], target: number): number => {
     let ans = 0;
     let l = 0;
     let r = lengths.length - 1;
@@ -84,7 +85,7 @@ const getIndexForLength = (lengths: number[], target: number): number => {
 };
 
 // Easing Functions
-const applyEasing = (t: number, type: EasingType): number => {
+export const applyEasing = (t: number, type: EasingType): number => {
     switch (type) {
         case EasingType.LINEAR: return t;
         case EasingType.EASE_IN: return t * t;
@@ -109,7 +110,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   selectionLocked,
   canvasRef,
   globalSpeed,
-  showDebug
+  showDebug,
+  animationTimeRef
 }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const currentPathRef = useRef<Point[]>([]);
@@ -164,7 +166,17 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const HIT_THRESHOLD = 15; // px
 
     const checkStroke = (stroke: Stroke, testPoint: Point) => {
-      // Simple bounding box check could go here for further optimization
+      // 1. Fast Bounding Box Check
+      if (stroke.precomputed?.bounds) {
+        const { minX, maxX, minY, maxY } = stroke.precomputed.bounds;
+        const pad = HIT_THRESHOLD;
+        if (testPoint.x < minX - pad || testPoint.x > maxX + pad || 
+            testPoint.y < minY - pad || testPoint.y > maxY + pad) {
+            return false;
+        }
+      }
+
+      // 2. Detailed Segment Check
       for(let i=0; i<stroke.points.length-1; i++) {
         if(distToSegment(testPoint, stroke.points[i], stroke.points[i+1]) < Math.max(HIT_THRESHOLD, stroke.width)) {
           return true;
@@ -210,7 +222,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       if (symmetry.type === SymmetryType.GRID) {
         const gap = symmetry.gridGap || 100;
-        // Cover a large enough area to ensure we find copies if they are on screen
+        // BBox Optimization for Grid Hit Testing:
+        // Instead of testing a generic range, only test if the input point shifted into the stroke's local space 
+        // lands near the stroke. However, since the grid replicates the stroke everywhere, we can just 
+        // modulo the input coordinate to bring it into a single "cell" relative to the stroke's origin?
+        // Not quite, because the stroke can span multiple cells.
+        // Fallback to the loop range check but keep it somewhat tight.
+        
         const rangeX = Math.ceil(width / gap) + 1;
         const rangeY = Math.ceil(height / gap) + 1;
 
@@ -381,6 +399,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const pEndRightX = lerp(re1.x, re2.x, endT);
     const pEndRightY = lerp(re1.y, re2.y, endT);
 
+    // Optimization: Lift context property setting out of loops where possible
+    
     // RENDER: Gradient Path or Solid Path
     if (endColor) {
         // --- GRADIENT ALONG PATH MODE ---
@@ -393,6 +413,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         let curL = { x: pStartLeftX, y: pStartLeftY };
         let curR = { x: pStartRightX, y: pStartRightY };
         let curDist = startLength;
+
+        // Optimization: Use a constant line width
+        ctx.lineWidth = 1; 
 
         // Iterate through full segments between start and end
         for (let i = startIndex + 1; i < endIndex; i++) {
@@ -411,7 +434,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             const segColor = `rgb(${r},${g},${b})`;
             ctx.fillStyle = segColor;
             ctx.strokeStyle = segColor;
-            ctx.lineWidth = 1; // Small stroke to cover anti-aliasing gaps
 
             ctx.beginPath();
             ctx.moveTo(curL.x, curL.y);
@@ -511,9 +533,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const centerX = width / 2;
     const centerY = height / 2;
 
-    // Note: We no longer set ctx.fillStyle here.
-    // The renderStrokePath function now handles color, including path-following gradients.
-
     const drawInstance = (phaseOffset: number, transformFn: () => void) => {
         ctx.save();
         transformFn();
@@ -527,38 +546,31 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             if (animationMode === AnimationMode.YOYO) {
                  let cycle = totalPhase % 2;
                  if (cycle < 0) cycle += 2;
-                 // Easing applies to the 0-1 normalized progress
                  const rawProgress = cycle > 1 ? 2 - cycle : cycle;
                  const easedProgress = applyEasing(rawProgress, easing || EasingType.LINEAR);
-                 
                  localEnd = totalLength * easedProgress;
                  localStart = 0;
             } else if (animationMode === AnimationMode.FLOW) {
                  let cycle = totalPhase % 2;
                  if (cycle < 0) cycle += 2;
                  if (cycle <= 1) {
-                     // Draw phase
                      localStart = 0;
                      const easedProgress = applyEasing(cycle, easing || EasingType.LINEAR);
                      localEnd = totalLength * easedProgress;
                  } else {
-                     // Erase phase
                      const easedProgress = applyEasing(cycle - 1, easing || EasingType.LINEAR);
                      localStart = totalLength * easedProgress;
                      localEnd = totalLength;
                  }
             } else {
-                 // LOOP
                  let rawProgress = totalPhase % 1;
                  if (rawProgress < 0) rawProgress += 1;
                  const easedProgress = applyEasing(rawProgress, easing || EasingType.LINEAR);
-                 
                  localEnd = totalLength * easedProgress;
                  localStart = 0;
             }
         }
         
-        // Use optimized renderer with gradient support
         renderStrokePath(ctx, precomputed, points, localStart, localEnd, totalLength, strokeWidth, color, endColor, isSelected);
         ctx.restore();
     };
@@ -614,36 +626,27 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       case SymmetryType.GRID:
          const gap = symmetry.gridGap || 100;
          
-         // Dynamically calculate the grid range needed to cover the viewport
-         // BBox of the stroke
-         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-         if (points.length > 0) {
-             for (const p of points) {
-                 if (p.x < minX) minX = p.x;
-                 if (p.x > maxX) maxX = p.x;
-                 if (p.y < minY) minY = p.y;
-                 if (p.y > maxY) maxY = p.y;
+         // Use Bounding Box optimization for Grid rendering
+         // Instead of iterating 0 to width, iterate the range of cells that intersect the canvas
+         if (points.length > 0 && precomputed.bounds) {
+             const { minX, maxX, minY, maxY } = precomputed.bounds;
+             const pad = strokeWidth; 
+             
+             const startX = Math.floor((-maxX - pad) / gap);
+             const endX = Math.ceil((width - minX + pad) / gap);
+             const startY = Math.floor((-maxY - pad) / gap);
+             const endY = Math.ceil((height - minY + pad) / gap);
+
+             for(let x = startX; x <= endX; x++) {
+                 for(let y = startY; y <= endY; y++) {
+                    drawInstance(0, () => {
+                        ctx.translate(x * gap, y * gap);
+                    });
+                 }
              }
          } else {
-             minX = 0; maxX = 0; minY = 0; maxY = 0;
-         }
-         
-         const pad = strokeWidth; 
-         // Calculate which grid indices (ix, iy) place the stroke inside the canvas [0,0, width, height]
-         // Stroke range shifted: [minX + ix*gap, maxX + ix*gap]
-         // Overlap condition: (minX + ix*gap < width) AND (maxX + ix*gap > 0)
-         
-         const startX = Math.floor((-maxX - pad) / gap);
-         const endX = Math.ceil((width - minX + pad) / gap);
-         const startY = Math.floor((-maxY - pad) / gap);
-         const endY = Math.ceil((height - minY + pad) / gap);
-
-         for(let x = startX; x <= endX; x++) {
-             for(let y = startY; y <= endY; y++) {
-                drawInstance(0, () => {
-                    ctx.translate(x * gap, y * gap);
-                });
-             }
+             // Fallback for edge cases (should happen rarely/never)
+             drawInstance(0, () => {});
          }
         break;
     }
@@ -745,9 +748,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         break;
       case SymmetryType.GRID:
          const gap = symmetry.gridGap || 100;
-         
-         // Dynamically cover screen
-         // The cursor has essentially 0 width/height for BBox purposes (or small radius)
          const pad = radius + 2; 
          const gStartX = Math.floor((-x - pad) / gap);
          const gEndX = Math.ceil((width - x + pad) / gap);
@@ -826,6 +826,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     scaledTimeRef.current += deltaSeconds * globalSpeedRef.current;
     const sec = scaledTimeRef.current;
     
+    // SYNC TIME WITH PARENT FOR SNAPSHOTS
+    animationTimeRef.current = sec;
+
     // Render existing strokes
     strokesRef.current.forEach(stroke => {
       // Safety check for legacy or invalid strokes without precomputed data

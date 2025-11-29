@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import DrawingCanvas from './components/DrawingCanvas';
+import DrawingCanvas, { getIndexForLength, lerp, hexToRgb, applyEasing } from './components/DrawingCanvas';
 import ControlPanel from './components/ControlPanel';
 import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings, EasingType } from './types';
 
@@ -103,6 +103,9 @@ export const computeRibbon = (points: Point[], settings: { width: number, taper:
     const right: Point[] = [];
     const cumulativeLengths: number[] = [0];
     
+    // Bounds tracking
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    
     if (points.length < 2) return { left: [], right: [], cumulativeLengths: [] };
 
     const totalLength = getPathLength(points);
@@ -157,11 +160,27 @@ export const computeRibbon = (points: Point[], settings: { width: number, taper:
         currentWidth = Math.max(0.1, currentWidth); // Ensure it doesn't disappear completely for logic
         const halfWidth = currentWidth / 2;
 
-        left.push({ x: p.x + nx * halfWidth, y: p.y + ny * halfWidth });
-        right.push({ x: p.x - nx * halfWidth, y: p.y - ny * halfWidth });
+        const lx = p.x + nx * halfWidth;
+        const ly = p.y + ny * halfWidth;
+        const rx = p.x - nx * halfWidth;
+        const ry = p.y - ny * halfWidth;
+
+        left.push({ x: lx, y: ly });
+        right.push({ x: rx, y: ry });
+
+        // Update Bounds
+        minX = Math.min(minX, lx, rx);
+        maxX = Math.max(maxX, lx, rx);
+        minY = Math.min(minY, ly, ry);
+        maxY = Math.max(maxY, ly, ry);
     }
 
-    return { left, right, cumulativeLengths };
+    return { 
+        left, 
+        right, 
+        cumulativeLengths,
+        bounds: { minX, maxX, minY, maxY }
+    };
 };
 
 function App() {
@@ -174,6 +193,9 @@ function App() {
   
   // Ref for the canvas to support snapshot functionality
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  // Shared time ref to sync SVG export with visual state
+  const animationTimeRef = useRef<number>(0);
 
   // Default settings for NEW strokes
   const [currentSettings, setCurrentSettings] = useState<Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp' | 'precomputed'>>({
@@ -346,6 +368,224 @@ function App() {
     }
   };
 
+  const handleExportSVG = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const time = animationTimeRef.current;
+
+      const getStrokeSVG = (stroke: Stroke) => {
+          // Replicate animation logic to find start/end length
+          const { totalLength, animationMode, speed, phase, easing } = stroke;
+          let localStart = 0;
+          let localEnd = totalLength;
+          
+          // Helper to generate path for a specific transform
+          // We generate separate paths for each transform instance
+          const generatePathsForInstance = (transformAttr: string, phaseOffset: number = 0) => {
+              // Calculate specific time state for this instance
+              const totalPhase = (time * speed + phase) + phaseOffset;
+              
+              if (animationMode === AnimationMode.YOYO) {
+                  let cycle = totalPhase % 2;
+                  if (cycle < 0) cycle += 2;
+                  const rawProgress = cycle > 1 ? 2 - cycle : cycle;
+                  const easedProgress = applyEasing(rawProgress, easing || EasingType.LINEAR);
+                  localEnd = totalLength * easedProgress;
+                  localStart = 0;
+              } else if (animationMode === AnimationMode.FLOW) {
+                  let cycle = totalPhase % 2;
+                  if (cycle < 0) cycle += 2;
+                  if (cycle <= 1) {
+                      localStart = 0;
+                      const easedProgress = applyEasing(cycle, easing || EasingType.LINEAR);
+                      localEnd = totalLength * easedProgress;
+                  } else {
+                      const easedProgress = applyEasing(cycle - 1, easing || EasingType.LINEAR);
+                      localStart = totalLength * easedProgress;
+                      localEnd = totalLength;
+                  }
+              } else {
+                  let rawProgress = totalPhase % 1;
+                  if (rawProgress < 0) rawProgress += 1;
+                  const easedProgress = applyEasing(rawProgress, easing || EasingType.LINEAR);
+                  localEnd = totalLength * easedProgress;
+                  localStart = 0;
+              }
+
+              if (localEnd <= localStart) return '';
+
+              // Get ribbon geometry
+              const { left, right, cumulativeLengths } = stroke.precomputed;
+              const count = cumulativeLengths.length;
+
+              const startSearchIdx = getIndexForLength(cumulativeLengths, localStart);
+              const startIndex = Math.min(startSearchIdx, count - 2);
+              const endSearchIdx = getIndexForLength(cumulativeLengths, localEnd);
+              const endIndex = Math.min(endSearchIdx + 1, count - 1);
+
+              // Interpolation
+              const startSegmentLen = cumulativeLengths[startIndex + 1] - cumulativeLengths[startIndex];
+              const endSegmentLen = cumulativeLengths[endIndex] - cumulativeLengths[endIndex - 1];
+              
+              let startT = (startSegmentLen > 0) ? (localStart - cumulativeLengths[startIndex]) / startSegmentLen : 0;
+              startT = Math.max(0, Math.min(1, startT));
+              
+              let endT = (endIndex > 0 && endSegmentLen > 0) ? (localEnd - cumulativeLengths[endIndex - 1]) / endSegmentLen : 1;
+              endT = Math.max(0, Math.min(1, endT));
+
+              const ls1 = left[startIndex];
+              const ls2 = left[startIndex + 1] || left[startIndex];
+              const rs1 = right[startIndex];
+              const rs2 = right[startIndex + 1] || right[startIndex];
+
+              const pStartLeftX = lerp(ls1.x, ls2.x, startT);
+              const pStartLeftY = lerp(ls1.y, ls2.y, startT);
+              const pStartRightX = lerp(rs1.x, rs2.x, startT);
+              const pStartRightY = lerp(rs1.y, rs2.y, startT);
+
+              const idxEndBase = Math.max(0, endIndex - 1);
+              const idxEndNext = endIndex;
+              const le1 = left[idxEndBase];
+              const le2 = left[idxEndNext];
+              const re1 = right[idxEndBase];
+              const re2 = right[idxEndNext];
+
+              const pEndLeftX = lerp(le1.x, le2.x, endT);
+              const pEndLeftY = lerp(le1.y, le2.y, endT);
+              const pEndRightX = lerp(re1.x, re2.x, endT);
+              const pEndRightY = lerp(re1.y, re2.y, endT);
+
+              let paths = '';
+
+              if (stroke.endColor) {
+                const startRgb = hexToRgb(stroke.color);
+                const endRgb = hexToRgb(stroke.endColor);
+                const dr = endRgb.r - startRgb.r;
+                const dg = endRgb.g - startRgb.g;
+                const db = endRgb.b - startRgb.b;
+
+                let curL = { x: pStartLeftX, y: pStartLeftY };
+                let curR = { x: pStartRightX, y: pStartRightY };
+                let curDist = localStart;
+
+                for (let i = startIndex + 1; i < endIndex; i++) {
+                    const nextL = left[i];
+                    const nextR = right[i];
+                    const nextDist = cumulativeLengths[i];
+                    
+                    const midDist = (curDist + nextDist) * 0.5;
+                    const t = Math.max(0, Math.min(1, midDist / totalLength));
+                    const r = Math.round(startRgb.r + dr * t);
+                    const g = Math.round(startRgb.g + dg * t);
+                    const b = Math.round(startRgb.b + db * t);
+                    const fill = `rgb(${r},${g},${b})`;
+
+                    const d = `M ${curL.x.toFixed(2)} ${curL.y.toFixed(2)} L ${nextL.x.toFixed(2)} ${nextL.y.toFixed(2)} L ${nextR.x.toFixed(2)} ${nextR.y.toFixed(2)} L ${curR.x.toFixed(2)} ${curR.y.toFixed(2)} Z`;
+                    
+                    paths += `<path d="${d}" fill="${fill}" stroke="${fill}" stroke-width="0.5" />`;
+
+                    curL = nextL;
+                    curR = nextR;
+                    curDist = nextDist;
+                }
+                 // Final segment
+                 const midDist = (curDist + localEnd) * 0.5;
+                 const t = Math.max(0, Math.min(1, midDist / totalLength));
+                 const r = Math.round(startRgb.r + dr * t);
+                 const g = Math.round(startRgb.g + dg * t);
+                 const b = Math.round(startRgb.b + db * t);
+                 const fill = `rgb(${r},${g},${b})`;
+                 const d = `M ${curL.x.toFixed(2)} ${curL.y.toFixed(2)} L ${pEndLeftX.toFixed(2)} ${pEndLeftY.toFixed(2)} L ${pEndRightX.toFixed(2)} ${pEndRightY.toFixed(2)} L ${curR.x.toFixed(2)} ${curR.y.toFixed(2)} Z`;
+                 paths += `<path d="${d}" fill="${fill}" stroke="${fill}" stroke-width="0.5" />`;
+
+              } else {
+                  // Solid Color
+                  let d = `M ${pStartLeftX.toFixed(2)} ${pStartLeftY.toFixed(2)}`;
+                  for (let i = startIndex + 1; i < endIndex; i++) {
+                      d += ` L ${left[i].x.toFixed(2)} ${left[i].y.toFixed(2)}`;
+                  }
+                  d += ` L ${pEndLeftX.toFixed(2)} ${pEndLeftY.toFixed(2)}`;
+                  d += ` L ${pEndRightX.toFixed(2)} ${pEndRightY.toFixed(2)}`;
+                  
+                  for (let i = endIndex - 1; i > startIndex; i--) {
+                      d += ` L ${right[i].x.toFixed(2)} ${right[i].y.toFixed(2)}`;
+                  }
+                  d += ` L ${pStartRightX.toFixed(2)} ${pStartRightY.toFixed(2)} Z`;
+
+                  paths += `<path d="${d}" fill="${stroke.color}" />`;
+              }
+              
+              return `<g transform="${transformAttr}">${paths}</g>`;
+          };
+
+          const centerX = width / 2;
+          const centerY = height / 2;
+          let content = '';
+
+          switch (stroke.symmetry.type) {
+              case SymmetryType.NONE:
+                  content += generatePathsForInstance('');
+                  break;
+              case SymmetryType.MIRROR_X:
+                  content += generatePathsForInstance('');
+                  content += generatePathsForInstance(`translate(${width}, 0) scale(-1, 1)`);
+                  break;
+              case SymmetryType.MIRROR_Y:
+                  content += generatePathsForInstance('');
+                  content += generatePathsForInstance(`translate(0, ${height}) scale(1, -1)`);
+                  break;
+              case SymmetryType.MIRROR_XY:
+                  content += generatePathsForInstance('');
+                  content += generatePathsForInstance(`translate(${width}, 0) scale(-1, 1)`);
+                  content += generatePathsForInstance(`translate(0, ${height}) scale(1, -1)`);
+                  content += generatePathsForInstance(`translate(${width}, ${height}) scale(-1, -1)`);
+                  break;
+              case SymmetryType.RADIAL:
+                  const angleStep = 360 / stroke.symmetry.copies;
+                  for (let i = 0; i < stroke.symmetry.copies; i++) {
+                      content += generatePathsForInstance(`rotate(${i * angleStep}, ${centerX}, ${centerY})`, i * stroke.symmetry.phaseShift);
+                  }
+                  break;
+              case SymmetryType.GRID:
+                 const gap = stroke.symmetry.gridGap || 100;
+                 if (stroke.precomputed.bounds) {
+                    const { minX, maxX, minY, maxY } = stroke.precomputed.bounds;
+                    const pad = stroke.width;
+                    const startX = Math.floor((-maxX - pad) / gap);
+                    const endX = Math.ceil((width - minX + pad) / gap);
+                    const startY = Math.floor((-maxY - pad) / gap);
+                    const endY = Math.ceil((height - minY + pad) / gap);
+                    
+                    for(let x = startX; x <= endX; x++) {
+                        for(let y = startY; y <= endY; y++) {
+                            content += generatePathsForInstance(`translate(${x * gap}, ${y * gap})`);
+                        }
+                    }
+                 } else {
+                     content += generatePathsForInstance('');
+                 }
+                 break;
+          }
+
+          return `<g id="${stroke.id}">${content}</g>`;
+      };
+
+      const svgContent = strokes.map(getStrokeSVG).join('\n');
+      const svgString = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="background-color: #0f172a">
+  ${svgContent}
+</svg>
+      `.trim();
+
+      const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `chronosketch-${Date.now()}.svg`;
+      link.click();
+      URL.revokeObjectURL(url);
+  };
+
   const handleExportJSON = () => {
     // We only need to export the data required to reconstruct the stroke
     // Precomputed data can be stripped to save space, as it's derivative
@@ -425,6 +665,7 @@ function App() {
         canvasRef={canvasRef}
         globalSpeed={globalSpeed}
         showDebug={showDebug}
+        animationTimeRef={animationTimeRef}
       />
       
       <ControlPanel 
@@ -440,6 +681,7 @@ function App() {
         selectionLocked={selectionLocked}
         onToggleSelectionLock={handleToggleSelectionLock}
         onSnapshot={handleSnapshot}
+        onExportSVG={handleExportSVG}
         onExportJSON={handleExportJSON}
         onImportJSON={handleImportJSON}
         onAIGenerateStroke={handleAIGeneratedStroke}

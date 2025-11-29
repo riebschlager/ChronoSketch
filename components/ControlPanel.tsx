@@ -31,7 +31,8 @@ import {
   Minimize2,
   Menu,
   MousePointer2,
-  Bug
+  Bug,
+  FileCode
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -47,6 +48,7 @@ interface ControlPanelProps {
   selectionLocked: boolean;
   onToggleSelectionLock: () => void;
   onSnapshot: () => void;
+  onExportSVG: () => void;
   onExportJSON: () => void;
   onImportJSON: () => void;
   onAIGenerateStroke: (normalizedPoints: Point[]) => void;
@@ -80,6 +82,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   selectionLocked,
   onToggleSelectionLock,
   onSnapshot,
+  onExportSVG,
   onExportJSON,
   onImportJSON,
   onAIGenerateStroke,
@@ -837,24 +840,31 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <SectionHeader id="project" label="Project Files" icon={Save} />
             {openSections.project && (
               <div className="px-3 pb-3 animate-in slide-in-from-top-2 duration-200">
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-4 gap-2">
                       <button 
                           onClick={onSnapshot}
-                          className="flex-1 flex flex-col items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 p-2 rounded text-[10px] text-slate-300 transition-colors"
-                          title="Save as Image"
+                          className="flex flex-col items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 p-2 rounded text-[10px] text-slate-300 transition-colors"
+                          title="Save as Image (PNG)"
                       >
-                          <ImageIcon size={14}/> Snapshot
+                          <ImageIcon size={14}/> Image
+                      </button>
+                      <button 
+                          onClick={onExportSVG}
+                          className="flex flex-col items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 p-2 rounded text-[10px] text-slate-300 transition-colors"
+                          title="Save as SVG"
+                      >
+                          <FileCode size={14}/> SVG
                       </button>
                       <button 
                           onClick={onExportJSON}
-                          className="flex-1 flex flex-col items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 p-2 rounded text-[10px] text-slate-300 transition-colors"
+                          className="flex flex-col items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 p-2 rounded text-[10px] text-slate-300 transition-colors"
                           title="Save Project File"
                       >
                           <Download size={14}/> Export
                       </button>
                       <button 
                           onClick={onImportJSON}
-                          className="flex-1 flex flex-col items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 p-2 rounded text-[10px] text-slate-300 transition-colors"
+                          className="flex flex-col items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 p-2 rounded text-[10px] text-slate-300 transition-colors"
                           title="Load Project File"
                       >
                           <Upload size={14}/> Import

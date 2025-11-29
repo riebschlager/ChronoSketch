@@ -4,6 +4,13 @@ export interface Point {
   y: number;
 }
 
+export interface Bounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
 export enum SymmetryType {
   NONE = 'NONE',
   MIRROR_X = 'MIRROR_X',
@@ -61,6 +68,7 @@ export interface PrecomputedRibbon {
   left: Point[];
   right: Point[];
   cumulativeLengths: number[];
+  bounds?: Bounds;
 }
 
 export interface Stroke extends StrokeSettings {
