@@ -1,7 +1,6 @@
 
-
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Stroke, Point, SymmetryType, AnimationMode, PrecomputedRibbon, EasingType, CapType } from '../types';
+import { Stroke, Point, SymmetryType, AnimationMode, PrecomputedRibbon, EasingType } from '../types';
 import { computeRibbon } from '../App'; // Imported for the live preview stroke
 
 interface DrawingCanvasProps {
@@ -101,63 +100,6 @@ export const applyEasing = (t: number, type: EasingType): number => {
     }
 };
 
-const drawCap = (
-  ctx: CanvasRenderingContext2D,
-  pLeft: Point,
-  pRight: Point,
-  type: CapType,
-  color: string,
-  isStart: boolean
-) => {
-   if (type === CapType.BUTT) return;
-
-   const mx = (pLeft.x + pRight.x) / 2;
-   const my = (pLeft.y + pRight.y) / 2;
-   const dx = pRight.x - pLeft.x;
-   const dy = pRight.y - pLeft.y;
-   const dist = Math.sqrt(dx*dx + dy*dy);
-   const r = dist / 2;
-
-   if (r < 0.1) return;
-
-   // Start Cap points Backward relative to path flow.
-   // Vector L->R is perpendicular to path.
-   // Forward along path is (dy, -dx)
-   // Start Cap Direction (Backward) = (-dy, dx)
-   // End Cap Direction (Forward) = (dy, -dx)
-   
-   let nx = dy;
-   let ny = -dx;
-   
-   // Normalize
-   const len = Math.sqrt(nx*nx + ny*ny);
-   if (len === 0) return;
-   nx /= len;
-   ny /= len;
-
-   if (isStart) {
-       nx = -nx;
-       ny = -ny;
-   }
-
-   ctx.fillStyle = color;
-   ctx.beginPath();
-
-   if (type === CapType.ROUND) {
-       ctx.arc(mx, my, r, 0, Math.PI * 2);
-   } else if (type === CapType.SQUARE) {
-       const px = nx * r;
-       const py = ny * r;
-       
-       ctx.moveTo(pLeft.x, pLeft.y);
-       ctx.lineTo(pRight.x, pRight.y);
-       ctx.lineTo(pRight.x + px, pRight.y + py);
-       ctx.lineTo(pLeft.x + px, pLeft.y + py);
-       ctx.closePath();
-   }
-   ctx.fill();
-};
-
 const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ 
   currentSettings, 
   strokes, 
@@ -174,8 +116,10 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const [isDrawing, setIsDrawing] = useState(false);
   const currentPathRef = useRef<Point[]>([]);
   
+  // Real mouse position
   const mousePosRef = useRef<Point | null>(null);
   
+  // Physics/Ghost cursor state
   const physicsStateRef = useRef({
       pos: { x: 0, y: 0 },
       vel: { x: 0, y: 0 }
@@ -185,6 +129,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const lastTimeRef = useRef<number>(0);
   const scaledTimeRef = useRef<number>(0);
   
+  // Debug Performance Stats
   const debugPanelRef = useRef<HTMLDivElement>(null);
   const statsRef = useRef({
     lastTime: 0,
@@ -196,6 +141,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     lastRenderTime: 0
   });
 
+  // Use a ref for globalSpeed to access it inside the animation loop 
+  // without triggering a re-creation of the loop callback
   const globalSpeedRef = useRef(globalSpeed);
   useEffect(() => {
     globalSpeedRef.current = globalSpeed;
@@ -206,6 +153,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     strokesRef.current = strokes;
   }, [strokes]);
 
+  // --- Hit Detection Logic ---
+
   const checkHit = (inputX: number, inputY: number): string | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -214,9 +163,10 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const height = canvas.height;
     const cx = width / 2;
     const cy = height / 2;
-    const HIT_THRESHOLD = 15; 
+    const HIT_THRESHOLD = 15; // px
 
     const checkStroke = (stroke: Stroke, testPoint: Point) => {
+      // 1. Fast Bounding Box Check
       if (stroke.precomputed?.bounds) {
         const { minX, maxX, minY, maxY } = stroke.precomputed.bounds;
         const pad = HIT_THRESHOLD;
@@ -226,6 +176,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         }
       }
 
+      // 2. Detailed Segment Check
       for(let i=0; i<stroke.points.length-1; i++) {
         if(distToSegment(testPoint, stroke.points[i], stroke.points[i+1]) < Math.max(HIT_THRESHOLD, stroke.width)) {
           return true;
@@ -234,11 +185,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       return false;
     };
 
+    // Iterate strokes from top (newest) to bottom
     for (let i = strokes.length - 1; i >= 0; i--) {
       const stroke = strokes[i];
       const { symmetry } = stroke;
 
       let testPoints: Point[] = [];
+      // 1. Identity
       testPoints.push({ x: inputX, y: inputY });
 
       if (symmetry.type === SymmetryType.MIRROR_X || symmetry.type === SymmetryType.MIRROR_XY) {
@@ -269,6 +222,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       if (symmetry.type === SymmetryType.GRID) {
         const gap = symmetry.gridGap || 100;
+        // BBox Optimization for Grid Hit Testing:
+        // Instead of testing a generic range, only test if the input point shifted into the stroke's local space 
+        // lands near the stroke. However, since the grid replicates the stroke everywhere, we can just 
+        // modulo the input coordinate to bring it into a single "cell" relative to the stroke's origin?
+        // Not quite, because the stroke can span multiple cells.
+        // Fallback to the loop range check but keep it somewhat tight.
+        
         const rangeX = Math.ceil(width / gap) + 1;
         const rangeY = Math.ceil(height / gap) + 1;
 
@@ -289,6 +249,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     return null;
   };
+
+  // --- Input Handlers ---
 
   const getCanvasPoint = (e: React.MouseEvent | React.TouchEvent): Point | null => {
     const canvas = canvasRef.current;
@@ -320,11 +282,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     mousePosRef.current = point;
     
+    // If physics is enabled, snap to mouse initially
     if (currentSettings.orbit.enabled) {
         physicsStateRef.current.pos = { ...point };
         physicsStateRef.current.vel = { x: 0, y: 0 };
         currentPathRef.current = [{ ...point }];
     } else {
+        // Direct drawing
         currentPathRef.current = [point];
     }
   };
@@ -334,11 +298,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (point) {
       mousePosRef.current = point;
       
+      // Update Physics target, but don't add point yet if Physics is ON (loop handles that)
       if (currentSettings.orbit.enabled) {
+          // Pass, logic is in renderLoop
       } else {
+          // Standard direct drawing
           if (isDrawing) {
             const lastPoint = currentPathRef.current[currentPathRef.current.length - 1];
-            if (lastPoint && distSq(lastPoint, point) > 4) { 
+            if (lastPoint && distSq(lastPoint, point) > 4) { // > 2px squared
               currentPathRef.current.push(point);
             }
           }
@@ -361,19 +328,19 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     handleEnd();
   };
 
+  // --- Rendering Logic ---
+
   // OPTIMIZED RENDERER: Uses pre-calculated geometry (Ribbon)
   const renderStrokePath = (
     ctx: CanvasRenderingContext2D, 
     precomputed: PrecomputedRibbon,
-    points: Point[], 
+    points: Point[], // Still needed for selection highlight
     startLength: number,
     endLength: number,
     totalLength: number,
     baseWidth: number,
     color: string,
-    endColor: string | undefined,
-    capStart: CapType,
-    capEnd: CapType,
+    endColor?: string,
     isSelected: boolean = false
   ) => {
     if (precomputed.left.length < 2) return;
@@ -382,12 +349,15 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const { left, right, cumulativeLengths } = precomputed;
     const count = cumulativeLengths.length;
 
+    // Use binary search for O(log N) lookup instead of O(N) scan
     const startSearchIdx = getIndexForLength(cumulativeLengths, startLength);
     const startIndex = Math.min(startSearchIdx, count - 2);
 
     const endSearchIdx = getIndexForLength(cumulativeLengths, endLength);
+    // Ensure endIndex captures the segment containing endLength
     const endIndex = Math.min(endSearchIdx + 1, count - 1);
 
+    // Determine interpolation factors for smooth cutoff
     const startSegmentLen = cumulativeLengths[startIndex + 1] - cumulativeLengths[startIndex];
     const endSegmentLen = cumulativeLengths[endIndex] - cumulativeLengths[endIndex - 1];
     
@@ -395,14 +365,15 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (startSegmentLen > 0) {
         startT = (startLength - cumulativeLengths[startIndex]) / startSegmentLen;
     }
-    startT = startT < 0 ? 0 : (startT > 1 ? 1 : startT); 
+    startT = startT < 0 ? 0 : (startT > 1 ? 1 : startT); // Fast clamp
     
     let endT = 1;
     if (endIndex > 0 && endSegmentLen > 0) {
         endT = (endLength - cumulativeLengths[endIndex - 1]) / endSegmentLen;
     }
-    endT = endT < 0 ? 0 : (endT > 1 ? 1 : endT); 
+    endT = endT < 0 ? 0 : (endT > 1 ? 1 : endT); // Fast clamp
 
+    // 1. Interpolated Start Points (Inlined lerp for perf)
     const ls1 = left[startIndex];
     const ls2 = left[startIndex + 1] || left[startIndex];
     const rs1 = right[startIndex];
@@ -413,6 +384,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const pStartRightX = lerp(rs1.x, rs2.x, startT);
     const pStartRightY = lerp(rs1.y, rs2.y, startT);
 
+    // 2. Interpolated End Points
+    // Careful: endIndex indexes the point *after* the segment
     const idxEndBase = Math.max(0, endIndex - 1);
     const idxEndNext = endIndex;
     
@@ -426,42 +399,31 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const pEndRightX = lerp(re1.x, re2.x, endT);
     const pEndRightY = lerp(re1.y, re2.y, endT);
 
-    // Color Calculation helpers
-    let startCapColor = color;
-    let endCapColor = color;
-
+    // Optimization: Lift context property setting out of loops where possible
+    
+    // RENDER: Gradient Path or Solid Path
     if (endColor) {
+        // --- GRADIENT ALONG PATH MODE ---
         const startRgb = hexToRgb(color);
         const endRgb = hexToRgb(endColor);
         const dr = endRgb.r - startRgb.r;
         const dg = endRgb.g - startRgb.g;
         const db = endRgb.b - startRgb.b;
 
-        // Calculate cap colors based on position
-        const tStart = Math.max(0, Math.min(1, startLength / totalLength));
-        const rS = Math.round(startRgb.r + dr * tStart);
-        const gS = Math.round(startRgb.g + dg * tStart);
-        const bS = Math.round(startRgb.b + db * tStart);
-        startCapColor = `rgb(${rS},${gS},${bS})`;
-
-        const tEnd = Math.max(0, Math.min(1, endLength / totalLength));
-        const rE = Math.round(startRgb.r + dr * tEnd);
-        const gE = Math.round(startRgb.g + dg * tEnd);
-        const bE = Math.round(startRgb.b + db * tEnd);
-        endCapColor = `rgb(${rE},${gE},${bE})`;
-
-        // RENDER GRADIENT BODY
         let curL = { x: pStartLeftX, y: pStartLeftY };
         let curR = { x: pStartRightX, y: pStartRightY };
         let curDist = startLength;
 
+        // Optimization: Use a constant line width
         ctx.lineWidth = 1; 
 
+        // Iterate through full segments between start and end
         for (let i = startIndex + 1; i < endIndex; i++) {
             const nextL = left[i];
             const nextR = right[i];
             const nextDist = cumulativeLengths[i];
             
+            // Calculate color at midpoint of segment for smooth appearance
             const midDist = (curDist + nextDist) * 0.5;
             const t = Math.max(0, Math.min(1, midDist / totalLength));
             
@@ -480,6 +442,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             ctx.lineTo(curR.x, curR.y);
             ctx.fill();
 
+            // Stroke the seam between this segment and the next to hide gaps
             ctx.beginPath();
             ctx.moveTo(nextL.x, nextL.y);
             ctx.lineTo(nextR.x, nextR.y);
@@ -490,6 +453,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             curDist = nextDist;
         }
 
+        // Final segment from last full point (or start point) to cutoff point
         const midDist = (curDist + endLength) * 0.5;
         const t = Math.max(0, Math.min(1, midDist / totalLength));
         const r = Math.round(startRgb.r + dr * t);
@@ -505,29 +469,32 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         ctx.fill();
 
     } else {
-        // SOLID COLOR BODY
+        // --- SOLID COLOR MODE (Optimized Single Poly) ---
         ctx.fillStyle = color;
         ctx.beginPath();
+        
+        // Trace Outline
         ctx.moveTo(pStartLeftX, pStartLeftY);
+
+        // Left side forward
         for (let i = startIndex + 1; i < endIndex; i++) {
             ctx.lineTo(left[i].x, left[i].y);
         }
+        
         ctx.lineTo(pEndLeftX, pEndLeftY);
         ctx.lineTo(pEndRightX, pEndRightY);
+
+        // Right side backward
         for (let i = endIndex - 1; i > startIndex; i--) {
             ctx.lineTo(right[i].x, right[i].y);
         }
+
         ctx.lineTo(pStartRightX, pStartRightY);
         ctx.closePath();
         ctx.fill();
     }
 
-    // DRAW CAPS
-    drawCap(ctx, {x: pStartLeftX, y: pStartLeftY}, {x: pStartRightX, y: pStartRightY}, capStart, startCapColor, true);
-    drawCap(ctx, {x: pEndLeftX, y: pEndLeftY}, {x: pEndRightX, y: pEndRightY}, capEnd, endCapColor, false);
-
-
-    // Selection Highlight
+    // Selection Highlight (Draws the spine)
     if (isSelected) {
       ctx.save();
       ctx.shadowColor = 'white';
@@ -540,6 +507,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       let started = false;
       let d = 0;
       
+      // Simple loop for spine is acceptable as selection is rare and single
       for (let i = 0; i < points.length; i++) {
          if (i>0) d += dist(points[i-1], points[i]);
          if (d >= startLength && d <= endLength) {
@@ -561,7 +529,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     isSelected: boolean,
     forceFullDraw: boolean = false
   ) => {
-    const { symmetry, color, endColor, width: strokeWidth, points, totalLength, animationMode, precomputed, easing, capStart, capEnd } = stroke;
+    const { symmetry, color, endColor, width: strokeWidth, points, totalLength, animationMode, precomputed, easing } = stroke;
     const centerX = width / 2;
     const centerY = height / 2;
 
@@ -603,13 +571,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             }
         }
         
-        // Pass capStart/capEnd to renderer (defaults to BUTT if undefined)
-        renderStrokePath(
-            ctx, precomputed, points, localStart, localEnd, totalLength, strokeWidth, color, endColor, 
-            capStart || CapType.BUTT, 
-            capEnd || CapType.BUTT, 
-            isSelected
-        );
+        renderStrokePath(ctx, precomputed, points, localStart, localEnd, totalLength, strokeWidth, color, endColor, isSelected);
         ctx.restore();
     };
 
@@ -663,9 +625,12 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         break;
       case SymmetryType.GRID:
          const gap = symmetry.gridGap || 100;
+         
+         // Use Bounding Box optimization for Grid rendering
+         // Instead of iterating 0 to width, iterate the range of cells that intersect the canvas
          if (points.length > 0 && precomputed.bounds) {
              const { minX, maxX, minY, maxY } = precomputed.bounds;
-             const pad = strokeWidth + 50; // Add padding for caps
+             const pad = strokeWidth; 
              
              const startX = Math.floor((-maxX - pad) / gap);
              const endX = Math.ceil((width - minX + pad) / gap);
@@ -680,6 +645,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
                  }
              }
          } else {
+             // Fallback for edge cases (should happen rarely/never)
              drawInstance(0, () => {});
          }
         break;
@@ -687,6 +653,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   };
 
   const renderGhostCursor = (ctx: CanvasRenderingContext2D, width: number, height: number, actualCursor: Point) => {
+    // Determine the point to replicate
     let x, y;
     if (currentSettings.orbit.enabled) {
         x = physicsStateRef.current.pos.x;
@@ -702,6 +669,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const centerY = height / 2;
     const radius = Math.max(2, strokeWidth / 2);
 
+    // Draw connection string if Orbit is active and mouse is present
     if (currentSettings.orbit.enabled && mousePosRef.current) {
         ctx.save();
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
@@ -805,10 +773,12 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
+    // Performance: Start timer
     const perfStart = performance.now();
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // --- Physics Simulation ---
     if (currentSettings.orbit.enabled) {
         const mouse = mousePosRef.current;
         if (mouse || isDrawing) {
@@ -844,27 +814,36 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         }
     }
 
+    // Time handling for speed scaling
     if (lastTimeRef.current === 0) {
         lastTimeRef.current = time;
     }
     const deltaSeconds = (time - lastTimeRef.current) / 1000;
     lastTimeRef.current = time;
     
+    // Increment local scaled time
+    // Access globalSpeed via ref to avoid renderLoop recreation
     scaledTimeRef.current += deltaSeconds * globalSpeedRef.current;
     const sec = scaledTimeRef.current;
     
+    // SYNC TIME WITH PARENT FOR SNAPSHOTS
     animationTimeRef.current = sec;
 
+    // Render existing strokes
     strokesRef.current.forEach(stroke => {
+      // Safety check for legacy or invalid strokes without precomputed data
       if (stroke.precomputed) {
           renderSymmetries(ctx, stroke, canvas.width, canvas.height, sec, stroke.id === selectedStrokeId);
       }
     });
 
+    // Render current drawing stroke (Live Preview)
     if (isDrawing && currentPathRef.current.length > 1) {
         const points = currentPathRef.current;
         const tempTotalLength = getPathLength(points);
         
+        // Optimize: For preview, we generate geometry on the fly. 
+        // This is fine for 1 stroke.
         const previewRibbon = computeRibbon(points, { 
             width: currentSettings.width, 
             taper: currentSettings.taper || 0 
@@ -872,8 +851,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
         const previewStroke: Stroke = {
             ...currentSettings,
-            capStart: currentSettings.capStart || CapType.BUTT,
-            capEnd: currentSettings.capEnd || CapType.BUTT,
             smoothing: 0, 
             simplification: 0,
             id: 'preview',
@@ -886,18 +863,22 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         renderSymmetries(ctx, previewStroke, canvas.width, canvas.height, sec, false, true);
     }
 
+    // Render Ghost Cursor
     if ((mousePosRef.current && !isUIHovered) || (currentSettings.orbit.enabled && !isUIHovered)) {
          renderGhostCursor(ctx, canvas.width, canvas.height, mousePosRef.current || {x:0,y:0});
     }
 
+    // Performance: End timer
     const perfEnd = performance.now();
     const renderDuration = perfEnd - perfStart;
 
+    // Debug Stats Update
     if (showDebug && debugPanelRef.current) {
         const s = statsRef.current;
         s.frameCount++;
         s.renderTimeAccumulator += renderDuration;
 
+        // Update DOM every 500ms
         if (time - s.lastTime >= 500) {
             s.fps = Math.round((s.frameCount * 1000) / (time - s.lastTime));
             s.minFps = Math.min(s.minFps, s.fps);
@@ -928,7 +909,7 @@ Render Scale: ${globalSpeedRef.current.toFixed(1)}x`;
     }
 
     animationFrameRef.current = requestAnimationFrame(renderLoop);
-  }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered, showDebug]); 
+  }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered, showDebug]); // Added showDebug
 
   useEffect(() => {
     animationFrameRef.current = requestAnimationFrame(renderLoop);
