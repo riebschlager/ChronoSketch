@@ -1,17 +1,188 @@
+
+
 import React, { useState, useRef, useEffect } from 'react';
-import DrawingCanvas from './components/DrawingCanvas';
+import DrawingCanvas, { getIndexForLength, lerp, hexToRgb, applyEasing } from './components/DrawingCanvas';
 import ControlPanel from './components/ControlPanel';
 import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings, EasingType, CapType } from './types';
-import { 
-    processPoints, 
-    computeRibbon, 
-    getPathLength, 
-    lerp, 
-    getIndexForLength, 
-    hexToRgb, 
-    applyEasing,
-    lerpPoint 
-} from './geometry';
+
+// --- Geometry Helpers ---
+
+// Replaced pow with direct multiplication for slight perf gain in hot paths
+const dist = (p1: Point, p2: Point) => Math.sqrt((p2.x - p1.x)*(p2.x - p1.x) + (p2.y - p1.y)*(p2.y - p1.y));
+
+const getPathLength = (points: Point[]): number => {
+  let length = 0;
+  for (let i = 1; i < points.length; i++) {
+    length += dist(points[i - 1], points[i]);
+  }
+  return length;
+};
+
+// Ramer-Douglas-Peucker simplification
+const simplifyPoints = (points: Point[], tolerance: number): Point[] => {
+  if (points.length <= 2 || tolerance <= 0) return points;
+
+  let maxDist = 0;
+  let index = 0;
+  const start = points[0];
+  const end = points[points.length - 1];
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i];
+    // Perpendicular distance
+    let d = 0;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const l2 = dx * dx + dy * dy;
+    
+    if (l2 === 0) {
+      d = dist(p, start);
+    } else {
+      const t = ((p.x - start.x) * dx + (p.y - start.y) * dy) / l2;
+      if (t < 0) d = dist(p, start);
+      else if (t > 1) d = dist(p, end);
+      else {
+        const proj = {
+          x: start.x + t * dx,
+          y: start.y + t * dy
+        };
+        d = dist(p, proj);
+      }
+    }
+
+    if (d > maxDist) {
+      maxDist = d;
+      index = i;
+    }
+  }
+
+  if (maxDist > tolerance) {
+    const left = simplifyPoints(points.slice(0, index + 1), tolerance);
+    const right = simplifyPoints(points.slice(index), tolerance);
+    return [...left.slice(0, -1), ...right];
+  } else {
+    return [start, end];
+  }
+};
+
+// Chaikin's Smoothing Algorithm
+const smoothPoints = (points: Point[], iterations: number): Point[] => {
+  if (iterations <= 0 || points.length < 3) return points;
+  
+  let current = points;
+  for (let k = 0; k < iterations; k++) {
+    const next: Point[] = [current[0]]; // Always keep start
+    for (let i = 0; i < current.length - 1; i++) {
+      const p0 = current[i];
+      const p1 = current[i + 1];
+      
+      // Cut corners at 25% and 75%
+      next.push({
+        x: 0.75 * p0.x + 0.25 * p1.x,
+        y: 0.75 * p0.y + 0.25 * p1.y
+      });
+      next.push({
+        x: 0.25 * p0.x + 0.75 * p1.x,
+        y: 0.25 * p0.y + 0.75 * p1.y
+      });
+    }
+    next.push(current[current.length - 1]); // Always keep end
+    current = next;
+  }
+  return current;
+};
+
+const processPoints = (points: Point[], smoothing: number, simplification: number): Point[] => {
+  const simplified = simplifyPoints(points, simplification);
+  const smoothed = smoothPoints(simplified, Math.floor(smoothing));
+  return smoothed;
+};
+
+// Pre-calculate the Ribbon (Left/Right polygon edges) for the entire stroke
+export const computeRibbon = (points: Point[], settings: { width: number, taper: number }): PrecomputedRibbon => {
+    const left: Point[] = [];
+    const right: Point[] = [];
+    const cumulativeLengths: number[] = [0];
+    
+    // Bounds tracking
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    
+    if (points.length < 2) return { left: [], right: [], cumulativeLengths: [] };
+
+    const totalLength = getPathLength(points);
+    const taperLen = totalLength * (settings.taper / 100);
+    const baseWidth = settings.width;
+
+    let currentDist = 0;
+
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        if (i > 0) {
+            currentDist += dist(points[i-1], p);
+            cumulativeLengths.push(currentDist);
+        }
+
+        let nx = 0;
+        let ny = 0;
+
+        if (i === 0) {
+            const next = points[i+1];
+            const dx = next.x - p.x;
+            const dy = next.y - p.y;
+            const len = Math.sqrt(dx*dx + dy*dy) || 1;
+            nx = -dy / len;
+            ny = dx / len;
+        } else if (i === points.length - 1) {
+            const prev = points[i-1];
+            const dx = p.x - prev.x;
+            const dy = p.y - prev.y;
+            const len = Math.sqrt(dx*dx + dy*dy) || 1;
+            nx = -dy / len;
+            ny = dx / len;
+        } else {
+            // Average normal for smooth joins
+            const prev = points[i-1];
+            const next = points[i+1];
+            const dx = next.x - prev.x;
+            const dy = next.y - prev.y;
+            const len = Math.sqrt(dx*dx + dy*dy) || 1;
+            nx = -dy / len;
+            ny = dx / len;
+        }
+
+        let currentWidth = baseWidth;
+        if (taperLen > 0) {
+            if (currentDist < taperLen) {
+                currentWidth = baseWidth * (currentDist / taperLen);
+            } else if (currentDist > totalLength - taperLen) {
+                currentWidth = baseWidth * ((totalLength - currentDist) / taperLen);
+            }
+        }
+        currentWidth = Math.max(0.1, currentWidth); // Ensure it doesn't disappear completely for logic
+        const halfWidth = currentWidth / 2;
+
+        const lx = p.x + nx * halfWidth;
+        const ly = p.y + ny * halfWidth;
+        const rx = p.x - nx * halfWidth;
+        const ry = p.y - ny * halfWidth;
+
+        left.push({ x: lx, y: ly });
+        right.push({ x: rx, y: ry });
+
+        // Update Bounds
+        minX = Math.min(minX, lx, rx);
+        maxX = Math.max(maxX, lx, rx);
+        minY = Math.min(minY, ly, ry);
+        maxY = Math.max(maxY, ly, ry);
+    }
+
+    return { 
+        left, 
+        right, 
+        cumulativeLengths,
+        bounds: { minX, maxX, minY, maxY }
+    };
+};
 
 function App() {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -30,7 +201,6 @@ function App() {
     endColor: undefined, 
     width: 4,
     taper: 0, 
-    taperEasing: EasingType.LINEAR,
     capStart: CapType.ROUND,
     capEnd: CapType.ROUND,
     smoothing: 0, 
@@ -79,7 +249,7 @@ function App() {
                 }
 
                 const needsPointProcess = updates.smoothing !== undefined || updates.simplification !== undefined;
-                const needsRibbonRecalc = needsPointProcess || updates.width !== undefined || updates.taper !== undefined || updates.taperEasing !== undefined;
+                const needsRibbonRecalc = needsPointProcess || updates.width !== undefined || updates.taper !== undefined;
 
                 if (needsPointProcess) {
                     const newPoints = processPoints(
@@ -94,8 +264,7 @@ function App() {
                 if (needsRibbonRecalc) {
                     mergedSettings.precomputed = computeRibbon(mergedSettings.points, {
                         width: mergedSettings.width,
-                        taper: mergedSettings.taper,
-                        taperEasing: mergedSettings.taperEasing
+                        taper: mergedSettings.taper
                     });
                 }
                 
@@ -120,11 +289,7 @@ function App() {
   const handleAddStroke = (rawPoints: Point[]) => {
     const processedPoints = processPoints(rawPoints, currentSettings.smoothing, currentSettings.simplification);
     
-    const ribbon = computeRibbon(processedPoints, { 
-      width: currentSettings.width, 
-      taper: currentSettings.taper,
-      taperEasing: currentSettings.taperEasing
-    });
+    const ribbon = computeRibbon(processedPoints, { width: currentSettings.width, taper: currentSettings.taper });
 
     const newStroke: Stroke = {
       ...currentSettings,
@@ -350,8 +515,9 @@ function App() {
               }
 
               // --- SVG Cap Logic ---
+              // Reuse logic from drawCap in DrawingCanvas
               const drawSvgCap = (pLeft: Point, pRight: Point, type: CapType, color: string, isStart: boolean) => {
-                  if (!type || type === CapType.BUTT) return '';
+                  if (type === CapType.BUTT) return '';
                   const mx = (pLeft.x + pRight.x) / 2;
                   const my = (pLeft.y + pRight.y) / 2;
                   const dx = pRight.x - pLeft.x;
@@ -382,7 +548,9 @@ function App() {
                   return '';
               };
 
+              // Start Cap
               paths += drawSvgCap({x: pStartLeftX, y: pStartLeftY}, {x: pStartRightX, y: pStartRightY}, stroke.capStart || CapType.BUTT, startCapColor, true);
+              // End Cap
               paths += drawSvgCap({x: pEndLeftX, y: pEndLeftY}, {x: pEndRightX, y: pEndRightY}, stroke.capEnd || CapType.BUTT, endCapColor, false);
 
               
@@ -486,15 +654,13 @@ function App() {
                         
                         // Re-process points based on stored raw points and settings
                         const processedPoints = processPoints(rawPoints, smoothing, simplification);
-                        const taperEasing = s.taperEasing || EasingType.LINEAR;
-                        const ribbon = computeRibbon(processedPoints, { width: s.width, taper: s.taper || 0, taperEasing });
+                        const ribbon = computeRibbon(processedPoints, { width: s.width, taper: s.taper || 0 });
                         
                         return {
                              ...s,
                              rawPoints,
                              points: processedPoints,
-                             precomputed: ribbon,
-                             taperEasing
+                             precomputed: ribbon
                         };
                     });
                     setStrokes(fixedStrokes);
