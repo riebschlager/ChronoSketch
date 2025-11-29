@@ -1,6 +1,7 @@
 
+
 import React, { useState, useEffect } from 'react';
-import { Stroke, SymmetryType, AnimationMode, Point, EasingType } from '../types';
+import { Stroke, SymmetryType, AnimationMode, Point, EasingType, CapType } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
 import { 
   Trash2, 
@@ -32,7 +33,10 @@ import {
   Menu,
   MousePointer2,
   Bug,
-  FileCode
+  FileCode,
+  Minus,
+  Circle,
+  Square,
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -80,7 +84,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isEditing,
   onDeselect,
   selectionLocked,
-  onToggleSelectionLock,
+  onToggleSelectionLock, 
   onSnapshot,
   onExportSVG,
   onExportJSON,
@@ -98,10 +102,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const [isGeneratingStroke, setIsGeneratingStroke] = useState(false);
   const [isPanelVisible, setIsPanelVisible] = useState(true);
   
-  // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; color: string } | null>(null);
 
-  // Persistent Palette History
   const [paletteHistory, setPaletteHistory] = useState<string[][]>(() => {
     try {
       const saved = localStorage.getItem('chronosketch_palettes');
@@ -119,7 +121,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     localStorage.setItem('chronosketch_palettes', JSON.stringify(paletteHistory));
   }, [paletteHistory]);
   
-  // Accordion State
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     style: true,
     motion: false,
@@ -158,10 +159,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     });
   };
 
-  // Context Menu Handlers
   const handleContextMenu = (e: React.MouseEvent, color: string) => {
       e.preventDefault();
-      // Clamp X position so menu doesn't overflow screen right
       const menuWidth = 150;
       const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
       const y = Math.min(e.clientY, window.innerHeight - 100);
@@ -197,7 +196,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       
       const json = JSON.parse(response.text || '[]');
       if (Array.isArray(json) && json.length > 0) {
-        // Filter to ensure strings
         const validPalette = json.filter(c => typeof c === 'string');
         if (validPalette.length > 0) {
           setPaletteHistory(prev => [validPalette, ...prev].slice(0, 50)); // Keep last 50
@@ -246,7 +244,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     }
   };
 
-  // Theme colors based on mode
   const accentColor = isEditing ? 'text-cyan-400' : 'text-purple-400';
   const accentBg = isEditing ? 'bg-cyan-600/50 border-cyan-400 text-white' : 'bg-purple-600/50 border-purple-400 text-white';
   const containerBorder = isEditing ? 'border-cyan-700/50 shadow-cyan-900/20' : 'border-slate-700 shadow-2xl';
@@ -263,6 +260,31 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         {openSections[id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
     </button>
   );
+
+  const CapSelector = ({ label, value, onChange }: { label: string, value: CapType, onChange: (v: CapType) => void }) => {
+     const options = [
+         { id: CapType.BUTT, icon: Minus, title: 'Flat' },
+         { id: CapType.ROUND, icon: Circle, title: 'Round' },
+         { id: CapType.SQUARE, icon: Square, title: 'Square' },
+     ];
+     return (
+         <div className="flex flex-col gap-1">
+             <span className="text-[9px] text-slate-500 uppercase tracking-wide">{label}</span>
+             <div className="flex bg-slate-800 rounded p-0.5">
+                 {options.map(opt => (
+                     <button
+                        key={opt.id}
+                        onClick={() => onChange(opt.id)}
+                        className={`flex-1 p-1 flex justify-center rounded transition-colors ${value === opt.id ? 'bg-slate-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                        title={opt.title}
+                     >
+                         <opt.icon size={12} />
+                     </button>
+                 ))}
+             </div>
+         </div>
+     );
+  };
 
   if (!isPanelVisible) {
     return (
@@ -285,22 +307,17 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        {/* --- Fixed Header --- */}
         <div className="flex-none flex flex-col gap-3 border-b border-slate-700 p-4">
-          {/* Row 1: Title */}
           <h1 className={`font-bold text-lg flex items-center gap-2 transition-colors ${accentColor}`}>
             {isEditing ? <Edit2 size={20}/> : <Activity size={20}/>}
             {isEditing ? 'Edit Stroke' : 'ChronoSketch'}
           </h1>
           
-          {/* Row 2: Header Controls */}
           <div className="flex items-center justify-between">
-              {/* Context Label */}
               <div className="text-[10px] text-slate-500 font-mono uppercase tracking-widest font-semibold">
                   {isEditing ? 'Properties' : 'Settings'}
               </div>
 
-              {/* Toolbar */}
               <div className="flex items-center gap-1">
                   <button
                       onClick={collapseAllSections}
@@ -365,16 +382,13 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
         </div>
 
-        {/* --- Scrollable Content (Accordion) --- */}
         <div className="flex-1 overflow-y-auto min-h-0 p-2 space-y-1 custom-scrollbar">
           
-          {/* Style Section */}
           <div className="border-b border-slate-800/50">
             <SectionHeader id="style" label="Colors & Style" icon={Palette} />
             {openSections.style && (
               <div className="px-3 pb-3 space-y-3 animate-in slide-in-from-top-2 duration-200">
                   
-                  {/* Palettes (Moved to Top) */}
                   <div className="space-y-2">
                       <div className="flex justify-between items-center text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
                           <span>Select Palette Color</span>
@@ -407,7 +421,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                           ))}
                       </div>
 
-                      {/* AI Generator Compact */}
                       <div className="flex gap-1">
                           <input 
                             type="text" 
@@ -430,7 +443,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
                   <div className="h-px bg-slate-800/50 my-1" />
 
-                  {/* Active Color Controls */}
                   <div className="space-y-2">
                       <div className="flex items-center justify-between">
                           <span className="text-xs text-slate-500 font-medium">Stroke Settings</span>
@@ -454,14 +466,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                       </div>
 
                       <div className="flex gap-3 items-center">
-                          {/* Start Color Box */}
                           <div className="flex flex-col items-center gap-1">
                               <div 
                                   className={`relative w-10 h-10 rounded-lg shadow-sm border-2 transition-all cursor-pointer group ${activeColorTarget === 'color' ? 'border-white ring-2 ring-purple-500/30' : 'border-slate-600 hover:border-slate-500'}`}
                                   onClick={() => setActiveColorTarget('color')}
                               >
                                   <div className="absolute inset-0.5 rounded-md" style={{ backgroundColor: settings.color }}></div>
-                                  {/* Native Picker Hidden but accessible */}
                                   <input 
                                       type="color" 
                                       value={settings.color}
@@ -477,7 +487,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                           {settings.endColor ? (
                               <>
                                   <ArrowRight size={14} className="text-slate-600"/>
-                                  {/* End Color Box */}
                                   <div className="flex flex-col items-center gap-1">
                                       <div 
                                           className={`relative w-10 h-10 rounded-lg shadow-sm border-2 transition-all cursor-pointer group ${activeColorTarget === 'endColor' ? 'border-white ring-2 ring-purple-500/30' : 'border-slate-600 hover:border-slate-500'}`}
@@ -500,7 +509,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                               <div className="flex-1 h-px bg-slate-800 mx-2"></div>
                           )}
                           
-                          {/* Thickness Slider - Compact */}
                           <div className="flex-1 ml-2">
                             <div className="flex justify-between text-[10px] text-slate-500 mb-1">
                               <span>Width</span>
@@ -517,8 +525,15 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                           </div>
                       </div>
                   </div>
+                  
+                  {/* Cap Settings */}
+                  <div className="bg-slate-800/30 rounded-lg p-2 space-y-2 border border-slate-800/50">
+                      <div className="grid grid-cols-2 gap-2">
+                          <CapSelector label="Start Cap" value={settings.capStart || CapType.BUTT} onChange={(v) => updateSetting('capStart', v)} />
+                          <CapSelector label="End Cap" value={settings.capEnd || CapType.BUTT} onChange={(v) => updateSetting('capEnd', v)} />
+                      </div>
+                  </div>
 
-                  {/* Geometry Controls */}
                   <div className="bg-slate-800/30 rounded-lg p-2 space-y-2 border border-slate-800/50">
                       <div>
                           <label className="flex justify-between text-[10px] text-slate-500 mb-1">
@@ -573,13 +588,11 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             )}
           </div>
 
-          {/* Animation Section */}
           <div className="border-b border-slate-800/50">
             <SectionHeader id="motion" label="Loop Dynamics" icon={RefreshCcw} />
             {openSections.motion && (
               <div className="px-3 pb-3 space-y-4 animate-in slide-in-from-top-2 duration-200">
                   
-                  {/* Global Speed Control */}
                   <div className="bg-slate-800/40 border border-slate-700/50 p-2 rounded-lg">
                       <div className="flex justify-between text-xs text-cyan-400 mb-1 font-semibold">
                         <span>Global Time Scale</span>
@@ -596,7 +609,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                       />
                   </div>
                   
-                  {/* Per Stroke Speed */}
                   <div>
                       <div className="flex justify-between text-xs text-slate-500 mb-1">
                         <span>Stroke Speed</span>
@@ -628,7 +640,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                       />
                   </div>
                   
-                  {/* Easing Selector */}
                   <div>
                     <div className="text-xs text-slate-500 mb-1">Easing</div>
                     <select
@@ -667,7 +678,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                     ))}
                   </div>
                   
-                  {/* Redistribute Phase Button */}
                   {!isEditing && (
                       <button
                           onClick={onRedistributePhases}
@@ -681,7 +691,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             )}
           </div>
 
-          {/* Orbit Physics Section */}
           <div className="border-b border-slate-800/50">
             <SectionHeader id="orbit" label="Orbit Dynamics" icon={Orbit} />
             {openSections.orbit && (
@@ -715,13 +724,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                       <div className="mt-3">
                         <div className="flex justify-between text-xs text-slate-500 mb-1">
                           <span>Friction (Damping)</span>
-                          {/* Display inverted friction: 1.0 (100% friction) means full stop */}
                           <span>{((1 - (settings.orbit?.friction || 0.95)) * 100).toFixed(1)}%</span>
                         </div>
                         <input 
                           type="range" 
-                          // Slider goes from Low Damping (0.001) to High Damping (0.9)
-                          // Corresponds to Friction 0.999 (slow stop) to 0.1 (fast stop)
                           min="0.001" 
                           max="0.900" 
                           step="0.001"
@@ -738,7 +744,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             )}
           </div>
 
-          {/* Symmetry Section */}
           <div className="border-b border-slate-800/50">
             <SectionHeader id="symmetry" label="Symmetry & Generative" icon={Copy} />
             {openSections.symmetry && (
@@ -818,7 +823,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                     </div>
                   )}
                   
-                  {/* AI Stroke Generation Button */}
                   <button 
                     onClick={handleGenerateAIStroke}
                     disabled={isGeneratingStroke}
@@ -835,7 +839,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             )}
           </div>
 
-          {/* Project Section */}
           <div className="border-b border-slate-800/50">
             <SectionHeader id="project" label="Project Files" icon={Save} />
             {openSections.project && (
@@ -876,7 +879,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
         </div>
 
-        {/* --- Fixed Footer (Actions) --- */}
         <div className="flex-none p-4 border-t border-slate-700 bg-slate-900/50 rounded-b-xl">
           <div className="flex gap-2">
               {!isEditing && (
@@ -909,7 +911,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </div>
       </div>
 
-      {/* --- Context Menu Portal/Overlay --- */}
       {contextMenu && (
         <>
             <div 
@@ -921,7 +922,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                 className="fixed z-[70] bg-slate-800 border border-slate-600 shadow-2xl rounded-lg py-1 min-w-[140px] flex flex-col animate-in fade-in zoom-in-95 duration-100 origin-top-left"
                 style={{ top: contextMenu.y, left: contextMenu.x }}
             >
-                {/* Header */}
                 <div className="px-3 py-2 border-b border-slate-700/50 flex items-center gap-2 mb-1 bg-slate-900/30">
                     <div className="w-3 h-3 rounded-full border border-slate-500 shadow-sm" style={{ backgroundColor: contextMenu.color }} />
                     <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">{contextMenu.color}</span>

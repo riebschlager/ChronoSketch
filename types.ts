@@ -1,4 +1,5 @@
 
+
 export interface Point {
   x: number;
   y: number;
@@ -35,6 +36,12 @@ export enum EasingType {
   ELASTIC = 'ELASTIC'
 }
 
+export enum CapType {
+  BUTT = 'BUTT',
+  ROUND = 'ROUND',
+  SQUARE = 'SQUARE'
+}
+
 export interface SymmetrySettings {
   type: SymmetryType;
   copies: number; // For Radial
@@ -52,6 +59,8 @@ export interface StrokeSettings {
   color: string;
   endColor?: string; // Optional: if present, stroke is a gradient
   width: number;
+  capStart: CapType;
+  capEnd: CapType;
   taper: number; // 0-100 represents percentage of length tapered on each end
   smoothing: number; // 0-5 iterations
   simplification: number; // 0-20 pixel tolerance

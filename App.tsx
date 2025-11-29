@@ -1,8 +1,9 @@
 
+
 import React, { useState, useRef, useEffect } from 'react';
 import DrawingCanvas, { getIndexForLength, lerp, hexToRgb, applyEasing } from './components/DrawingCanvas';
 import ControlPanel from './components/ControlPanel';
-import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings, EasingType } from './types';
+import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings, EasingType, CapType } from './types';
 
 // --- Geometry Helpers ---
 
@@ -191,24 +192,23 @@ function App() {
   const [globalSpeed, setGlobalSpeed] = useState(1.0);
   const [showDebug, setShowDebug] = useState(false);
   
-  // Ref for the canvas to support snapshot functionality
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // Shared time ref to sync SVG export with visual state
   const animationTimeRef = useRef<number>(0);
 
-  // Default settings for NEW strokes
   const [currentSettings, setCurrentSettings] = useState<Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp' | 'precomputed'>>({
-    color: '#a855f7', // Purple 500
-    endColor: undefined, // Default no gradient
+    color: '#a855f7', 
+    endColor: undefined, 
     width: 4,
-    taper: 0, // Default no taper
-    smoothing: 0, // Default no smoothing
-    simplification: 0, // Default no simplification
+    taper: 0, 
+    capStart: CapType.ROUND,
+    capEnd: CapType.ROUND,
+    smoothing: 0, 
+    simplification: 0, 
     speed: 0.5,
     phase: 0,
-    easing: EasingType.SINE, // Default easing
-    animationMode: AnimationMode.FLOW, // Default to the new flow mode
+    easing: EasingType.SINE, 
+    animationMode: AnimationMode.FLOW, 
     symmetry: {
       type: SymmetryType.NONE,
       copies: 8,
@@ -224,13 +224,10 @@ function App() {
 
   const activeStroke = selectedStrokeId ? strokes.find(s => s.id === selectedStrokeId) : null;
   
-  // Flatten panel settings for display
   const panelSettings = activeStroke || currentSettings;
 
-  // Add Keyboard Shortcut for Debug Panel
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-        // Toggle debug with Backtick (`) or F3
         if (e.key === '`' || e.key === 'F3') {
             setShowDebug(prev => !prev);
         }
@@ -244,7 +241,6 @@ function App() {
         setStrokes(prev => prev.map(s => {
             if (s.id === activeStroke.id) {
                 const mergedSettings = { ...s, ...updates };
-                // Ensure deep merge for nested objects
                 if (updates.symmetry) {
                     mergedSettings.symmetry = { ...s.symmetry, ...updates.symmetry };
                 }
@@ -252,7 +248,6 @@ function App() {
                     mergedSettings.orbit = { ...s.orbit, ...updates.orbit };
                 }
 
-                // Check if we need to recalculate geometry
                 const needsPointProcess = updates.smoothing !== undefined || updates.simplification !== undefined;
                 const needsRibbonRecalc = needsPointProcess || updates.width !== undefined || updates.taper !== undefined;
 
@@ -278,7 +273,6 @@ function App() {
             return s;
         }));
     } else {
-        // Update global settings for new strokes
         setCurrentSettings(prev => {
              const next = { ...prev, ...updates };
              if (updates.symmetry) {
@@ -295,7 +289,6 @@ function App() {
   const handleAddStroke = (rawPoints: Point[]) => {
     const processedPoints = processPoints(rawPoints, currentSettings.smoothing, currentSettings.simplification);
     
-    // Initial Ribbon Calculation
     const ribbon = computeRibbon(processedPoints, { width: currentSettings.width, taper: currentSettings.taper });
 
     const newStroke: Stroke = {
@@ -311,7 +304,6 @@ function App() {
   };
 
   const handleAIGeneratedStroke = (normalizedPoints: Point[]) => {
-      // Scale normalized (0-1) points to fit within the current window, centered
       const width = window.innerWidth;
       const height = window.innerHeight;
       const padding = Math.min(width, height) * 0.2;
@@ -374,15 +366,11 @@ function App() {
       const time = animationTimeRef.current;
 
       const getStrokeSVG = (stroke: Stroke) => {
-          // Replicate animation logic to find start/end length
           const { totalLength, animationMode, speed, phase, easing } = stroke;
           let localStart = 0;
           let localEnd = totalLength;
           
-          // Helper to generate path for a specific transform
-          // We generate separate paths for each transform instance
           const generatePathsForInstance = (transformAttr: string, phaseOffset: number = 0) => {
-              // Calculate specific time state for this instance
               const totalPhase = (time * speed + phase) + phaseOffset;
               
               if (animationMode === AnimationMode.YOYO) {
@@ -414,7 +402,6 @@ function App() {
 
               if (localEnd <= localStart) return '';
 
-              // Get ribbon geometry
               const { left, right, cumulativeLengths } = stroke.precomputed;
               const count = cumulativeLengths.length;
 
@@ -423,7 +410,6 @@ function App() {
               const endSearchIdx = getIndexForLength(cumulativeLengths, localEnd);
               const endIndex = Math.min(endSearchIdx + 1, count - 1);
 
-              // Interpolation
               const startSegmentLen = cumulativeLengths[startIndex + 1] - cumulativeLengths[startIndex];
               const endSegmentLen = cumulativeLengths[endIndex] - cumulativeLengths[endIndex - 1];
               
@@ -456,6 +442,8 @@ function App() {
               const pEndRightY = lerp(re1.y, re2.y, endT);
 
               let paths = '';
+              let startCapColor = stroke.color;
+              let endCapColor = stroke.color;
 
               if (stroke.endColor) {
                 const startRgb = hexToRgb(stroke.color);
@@ -463,6 +451,19 @@ function App() {
                 const dr = endRgb.r - startRgb.r;
                 const dg = endRgb.g - startRgb.g;
                 const db = endRgb.b - startRgb.b;
+
+                // Cap Colors
+                const tS = Math.max(0, Math.min(1, localStart / totalLength));
+                const rS = Math.round(startRgb.r + dr * tS);
+                const gS = Math.round(startRgb.g + dg * tS);
+                const bS = Math.round(startRgb.b + db * tS);
+                startCapColor = `rgb(${rS},${gS},${bS})`;
+                
+                const tE = Math.max(0, Math.min(1, localEnd / totalLength));
+                const rE = Math.round(startRgb.r + dr * tE);
+                const gE = Math.round(startRgb.g + dg * tE);
+                const bE = Math.round(startRgb.b + db * tE);
+                endCapColor = `rgb(${rE},${gE},${bE})`;
 
                 let curL = { x: pStartLeftX, y: pStartLeftY };
                 let curR = { x: pStartRightX, y: pStartRightY };
@@ -488,7 +489,6 @@ function App() {
                     curR = nextR;
                     curDist = nextDist;
                 }
-                 // Final segment
                  const midDist = (curDist + localEnd) * 0.5;
                  const t = Math.max(0, Math.min(1, midDist / totalLength));
                  const r = Math.round(startRgb.r + dr * t);
@@ -499,7 +499,6 @@ function App() {
                  paths += `<path d="${d}" fill="${fill}" stroke="${fill}" stroke-width="0.5" />`;
 
               } else {
-                  // Solid Color
                   let d = `M ${pStartLeftX.toFixed(2)} ${pStartLeftY.toFixed(2)}`;
                   for (let i = startIndex + 1; i < endIndex; i++) {
                       d += ` L ${left[i].x.toFixed(2)} ${left[i].y.toFixed(2)}`;
@@ -514,6 +513,46 @@ function App() {
 
                   paths += `<path d="${d}" fill="${stroke.color}" />`;
               }
+
+              // --- SVG Cap Logic ---
+              // Reuse logic from drawCap in DrawingCanvas
+              const drawSvgCap = (pLeft: Point, pRight: Point, type: CapType, color: string, isStart: boolean) => {
+                  if (type === CapType.BUTT) return '';
+                  const mx = (pLeft.x + pRight.x) / 2;
+                  const my = (pLeft.y + pRight.y) / 2;
+                  const dx = pRight.x - pLeft.x;
+                  const dy = pRight.y - pLeft.y;
+                  const dist = Math.sqrt(dx*dx + dy*dy);
+                  const r = dist / 2;
+                  if (r < 0.1) return '';
+
+                  let nx = dy;
+                  let ny = -dx;
+                  const len = Math.sqrt(nx*nx + ny*ny);
+                  if (len === 0) return '';
+                  nx /= len;
+                  ny /= len;
+                  if (isStart) { nx = -nx; ny = -ny; }
+
+                  if (type === CapType.ROUND) {
+                      return `<circle cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="${r.toFixed(2)}" fill="${color}" />`;
+                  } else if (type === CapType.SQUARE) {
+                      const px = nx * r;
+                      const py = ny * r;
+                      const p1 = {x: pRight.x, y: pRight.y};
+                      const p2 = {x: pRight.x + px, y: pRight.y + py};
+                      const p3 = {x: pLeft.x + px, y: pLeft.y + py};
+                      const p4 = {x: pLeft.x, y: pLeft.y};
+                      return `<polygon points="${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y} ${p4.x},${p4.y}" fill="${color}" />`;
+                  }
+                  return '';
+              };
+
+              // Start Cap
+              paths += drawSvgCap({x: pStartLeftX, y: pStartLeftY}, {x: pStartRightX, y: pStartRightY}, stroke.capStart || CapType.BUTT, startCapColor, true);
+              // End Cap
+              paths += drawSvgCap({x: pEndLeftX, y: pEndLeftY}, {x: pEndRightX, y: pEndRightY}, stroke.capEnd || CapType.BUTT, endCapColor, false);
+
               
               return `<g transform="${transformAttr}">${paths}</g>`;
           };
@@ -587,8 +626,6 @@ function App() {
   };
 
   const handleExportJSON = () => {
-    // We only need to export the data required to reconstruct the stroke
-    // Precomputed data can be stripped to save space, as it's derivative
     const exportData = strokes.map(({ precomputed, ...rest }) => rest);
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
     const link = document.createElement('a');
@@ -610,41 +647,27 @@ function App() {
             try {
                 const json = JSON.parse(event.target?.result as string);
                 if (Array.isArray(json)) {
-                    // Backwards compatibility and Hydration
                     const fixedStrokes = json.map((s: any) => {
                         const rawPoints = s.rawPoints || s.points;
-                        const smoothing = s.smoothing ?? 0;
-                        const simplification = s.simplification ?? 0;
+                        const smoothing = s.smoothing || 0;
+                        const simplification = s.simplification || 0;
                         
-                        // Ensure points are processed if not present or if settings match
-                        // But usually we trust rawPoints and re-process to be safe
-                        const points = processPoints(rawPoints, smoothing, simplification);
-                        const width = s.width || 4;
-                        const taper = s.taper || 0;
-
+                        // Re-process points based on stored raw points and settings
+                        const processedPoints = processPoints(rawPoints, smoothing, simplification);
+                        const ribbon = computeRibbon(processedPoints, { width: s.width, taper: s.taper || 0 });
+                        
                         return {
-                            ...s,
-                            rawPoints: rawPoints,
-                            points: points,
-                            smoothing,
-                            simplification,
-                            taper,
-                            width,
-                            totalLength: getPathLength(points),
-                            orbit: s.orbit || { enabled: false, mass: 2, friction: 0.95 },
-                            easing: s.easing || EasingType.LINEAR,
-                            // Hydrate the precomputed ribbon
-                            precomputed: computeRibbon(points, { width, taper })
+                             ...s,
+                             rawPoints,
+                             points: processedPoints,
+                             precomputed: ribbon
                         };
                     });
                     setStrokes(fixedStrokes);
                     setSelectedStrokeId(null);
-                } else {
-                    alert("Invalid file format.");
                 }
             } catch (err) {
-                console.error("Failed to parse JSON", err);
-                alert("Failed to parse the file.");
+                console.error("Invalid JSON", err);
             }
         };
         reader.readAsText(file);
@@ -653,50 +676,52 @@ function App() {
   };
 
   return (
-    <div className="relative w-screen h-screen bg-slate-950 overflow-hidden font-sans">
-      <DrawingCanvas 
-        strokes={strokes} 
-        onAddStroke={handleAddStroke}
-        currentSettings={currentSettings}
-        isUIHovered={isUIHovered}
-        selectedStrokeId={selectedStrokeId}
-        onSelectStroke={setSelectedStrokeId}
-        selectionLocked={selectionLocked}
-        canvasRef={canvasRef}
-        globalSpeed={globalSpeed}
-        showDebug={showDebug}
-        animationTimeRef={animationTimeRef}
-      />
-      
-      <ControlPanel 
-        settings={panelSettings}
-        setSettings={updatePanelSettings}
-        onClear={handleClear}
-        onUndo={handleUndo}
-        strokeCount={strokes.length}
-        onMouseEnter={() => setIsUIHovered(true)}
-        onMouseLeave={() => setIsUIHovered(false)}
-        isEditing={!!selectedStrokeId}
-        onDeselect={() => setSelectedStrokeId(null)}
-        selectionLocked={selectionLocked}
-        onToggleSelectionLock={handleToggleSelectionLock}
-        onSnapshot={handleSnapshot}
-        onExportSVG={handleExportSVG}
-        onExportJSON={handleExportJSON}
-        onImportJSON={handleImportJSON}
-        onAIGenerateStroke={handleAIGeneratedStroke}
-        onRedistributePhases={handleRedistributePhases}
-        globalSpeed={globalSpeed}
-        setGlobalSpeed={setGlobalSpeed}
-        showDebug={showDebug}
-        onToggleDebug={() => setShowDebug(!showDebug)}
-      />
-
-      {strokes.length === 0 && (
-        <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 pointer-events-none text-slate-600 text-sm animate-pulse">
-          Click and drag to draw. {selectionLocked ? 'Selection is locked.' : 'Click strokes to edit.'}
-        </div>
-      )}
+    <div className="relative w-full h-full overflow-hidden bg-slate-900 select-none touch-none">
+       <DrawingCanvas 
+          currentSettings={currentSettings}
+          strokes={strokes}
+          onAddStroke={handleAddStroke}
+          selectedStrokeId={selectedStrokeId}
+          onSelectStroke={(id) => {
+              if (selectionLocked) return;
+              setSelectedStrokeId(id);
+          }}
+          isUIHovered={isUIHovered}
+          selectionLocked={selectionLocked}
+          canvasRef={canvasRef}
+          globalSpeed={globalSpeed}
+          showDebug={showDebug}
+          animationTimeRef={animationTimeRef}
+       />
+       <ControlPanel 
+          settings={panelSettings}
+          setSettings={updatePanelSettings}
+          onClear={handleClear}
+          onUndo={handleUndo}
+          strokeCount={strokes.length}
+          onMouseEnter={() => setIsUIHovered(true)}
+          onMouseLeave={() => setIsUIHovered(false)}
+          isEditing={!!selectedStrokeId}
+          onDeselect={() => setSelectedStrokeId(null)}
+          selectionLocked={selectionLocked}
+          onToggleSelectionLock={handleToggleSelectionLock}
+          onSnapshot={handleSnapshot}
+          onExportSVG={handleExportSVG}
+          onExportJSON={handleExportJSON}
+          onImportJSON={handleImportJSON}
+          onAIGenerateStroke={handleAIGeneratedStroke}
+          onRedistributePhases={handleRedistributePhases}
+          globalSpeed={globalSpeed}
+          setGlobalSpeed={setGlobalSpeed}
+          showDebug={showDebug}
+          onToggleDebug={() => setShowDebug(!showDebug)}
+       />
+       
+       {strokes.length === 0 && !isUIHovered && (
+           <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 pointer-events-none text-slate-500 text-sm animate-pulse">
+               Draw on the canvas to start...
+           </div>
+       )}
     </div>
   );
 }
