@@ -530,24 +530,34 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     // Selection Highlight
     if (isSelected) {
       ctx.save();
-      ctx.shadowColor = 'white';
-      ctx.shadowBlur = 10;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.lineWidth = baseWidth + 4;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      let started = false;
-      let d = 0;
+      // Optimization: Removed shadowBlur and expensive distance calculations in loop.
+      // Instead, we use the already calculated indices and simple line drawing.
       
-      for (let i = 0; i < points.length; i++) {
-         if (i>0) d += dist(points[i-1], points[i]);
-         if (d >= startLength && d <= endLength) {
-             if (!started) { ctx.moveTo(points[i].x, points[i].y); started = true; }
-             else ctx.lineTo(points[i].x, points[i].y);
-         }
+      const pStartCenter = lerpPoint(points[startIndex], points[startIndex+1], startT);
+      const pEndCenter = lerpPoint(points[idxEndBase], points[idxEndNext], endT);
+
+      // 1. Draw dashed centerline for precision
+      ctx.beginPath();
+      ctx.moveTo(pStartCenter.x, pStartCenter.y);
+      for (let i = startIndex + 1; i <= idxEndBase; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
       }
+      ctx.lineTo(pEndCenter.x, pEndCenter.y);
+      
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.lineCap = 'butt';
       ctx.stroke();
+
+      // 2. Draw subtle transparent halo (simulating glow without expensive blur)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.lineWidth = baseWidth + 4; 
+      ctx.setLineDash([]);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+
       ctx.restore();
     }
   };
@@ -876,7 +886,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             capStart: currentSettings.capStart || CapType.BUTT,
             capEnd: currentSettings.capEnd || CapType.BUTT,
             smoothing: 0, 
-            simplification: 0,
+            simplification: 0, 
             id: 'preview',
             points: points,
             rawPoints: points,
