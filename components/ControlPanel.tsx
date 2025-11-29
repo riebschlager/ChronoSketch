@@ -50,6 +50,8 @@ interface ControlPanelProps {
   onImportJSON: () => void;
   onAIGenerateStroke: (normalizedPoints: Point[]) => void;
   onRedistributePhases: () => void;
+  globalSpeed: number;
+  setGlobalSpeed: (speed: number) => void;
 }
 
 const DEFAULT_PALETTES = [
@@ -78,7 +80,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onExportJSON,
   onImportJSON,
   onAIGenerateStroke,
-  onRedistributePhases
+  onRedistributePhases,
+  globalSpeed,
+  setGlobalSpeed
 }) => {
   const [activeColorTarget, setActiveColorTarget] = useState<'color' | 'endColor'>('color');
   const [palettePrompt, setPalettePrompt] = useState('');
@@ -554,9 +558,28 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <SectionHeader id="motion" label="Loop Dynamics" icon={RefreshCcw} />
             {openSections.motion && (
               <div className="px-3 pb-3 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                  
+                  {/* Global Speed Control */}
+                  <div className="bg-slate-800/40 border border-slate-700/50 p-2 rounded-lg">
+                      <div className="flex justify-between text-xs text-cyan-400 mb-1 font-semibold">
+                        <span>Global Time Scale</span>
+                        <span>{globalSpeed.toFixed(1)}x</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="5.0" 
+                        step="0.1"
+                        value={globalSpeed}
+                        onChange={(e) => setGlobalSpeed(Number(e.target.value))}
+                        className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                      />
+                  </div>
+                  
+                  {/* Per Stroke Speed */}
                   <div>
                       <div className="flex justify-between text-xs text-slate-500 mb-1">
-                        <span>Speed</span>
+                        <span>Stroke Speed</span>
                         <span>{settings.speed.toFixed(1)}x</span>
                       </div>
                       <input 

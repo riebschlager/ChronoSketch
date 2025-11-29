@@ -169,6 +169,7 @@ function App() {
   const [isUIHovered, setIsUIHovered] = useState(false);
   const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
   const [selectionLocked, setSelectionLocked] = useState(false);
+  const [globalSpeed, setGlobalSpeed] = useState(1.0);
   
   // Ref for the canvas to support snapshot functionality
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -409,6 +410,7 @@ function App() {
         onSelectStroke={setSelectedStrokeId}
         selectionLocked={selectionLocked}
         canvasRef={canvasRef}
+        globalSpeed={globalSpeed}
       />
       
       <ControlPanel 
@@ -428,6 +430,8 @@ function App() {
         onImportJSON={handleImportJSON}
         onAIGenerateStroke={handleAIGeneratedStroke}
         onRedistributePhases={handleRedistributePhases}
+        globalSpeed={globalSpeed}
+        setGlobalSpeed={setGlobalSpeed}
       />
 
       {strokes.length === 0 && (

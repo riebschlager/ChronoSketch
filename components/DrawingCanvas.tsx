@@ -12,6 +12,7 @@ interface DrawingCanvasProps {
   isUIHovered: boolean;
   selectionLocked: boolean;
   canvasRef: React.RefObject<HTMLCanvasElement>;
+  globalSpeed: number;
 }
 
 // --- Helper Functions ---
@@ -90,7 +91,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   onSelectStroke,
   isUIHovered,
   selectionLocked,
-  canvasRef
+  canvasRef,
+  globalSpeed
 }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const currentPathRef = useRef<Point[]>([]);
@@ -105,6 +107,15 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   });
 
   const animationFrameRef = useRef<number>(0);
+  const lastTimeRef = useRef<number>(0);
+  const scaledTimeRef = useRef<number>(0);
+  
+  // Use a ref for globalSpeed to access it inside the animation loop 
+  // without triggering a re-creation of the loop callback
+  const globalSpeedRef = useRef(globalSpeed);
+  useEffect(() => {
+    globalSpeedRef.current = globalSpeed;
+  }, [globalSpeed]);
   
   const strokesRef = useRef<Stroke[]>(strokes);
   useEffect(() => {
@@ -710,7 +721,17 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         }
     }
 
-    const sec = time / 1000;
+    // Time handling for speed scaling
+    if (lastTimeRef.current === 0) {
+        lastTimeRef.current = time;
+    }
+    const deltaSeconds = (time - lastTimeRef.current) / 1000;
+    lastTimeRef.current = time;
+    
+    // Increment local scaled time
+    // Access globalSpeed via ref to avoid renderLoop recreation
+    scaledTimeRef.current += deltaSeconds * globalSpeedRef.current;
+    const sec = scaledTimeRef.current;
     
     // Render existing strokes
     strokesRef.current.forEach(stroke => {
@@ -752,7 +773,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
 
     animationFrameRef.current = requestAnimationFrame(renderLoop);
-  }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered]);
+  }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered]); // Removed globalSpeed from dependency
 
   useEffect(() => {
     animationFrameRef.current = requestAnimationFrame(renderLoop);
