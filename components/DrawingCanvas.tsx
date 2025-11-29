@@ -170,9 +170,12 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       if (symmetry.type === SymmetryType.GRID) {
         const gap = symmetry.gridGap || 100;
-        const gridRange = 3;
-        for(let gx = -gridRange; gx <= gridRange; gx++) {
-            for(let gy = -gridRange; gy <= gridRange; gy++) {
+        // Cover a large enough area to ensure we find copies if they are on screen
+        const rangeX = Math.ceil(width / gap) + 1;
+        const rangeY = Math.ceil(height / gap) + 1;
+
+        for(let gx = -rangeX; gx <= rangeX; gx++) {
+            for(let gy = -rangeY; gy <= rangeY; gy++) {
                 if (gx === 0 && gy === 0) continue; 
                 testPoints.push({ x: inputX - gx * gap, y: inputY - gy * gap });
             }
@@ -509,9 +512,33 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         break;
       case SymmetryType.GRID:
          const gap = symmetry.gridGap || 100;
-         const gridRange = 3; 
-         for(let x = -gridRange; x <= gridRange; x++) {
-             for(let y = -gridRange; y <= gridRange; y++) {
+         
+         // Dynamically calculate the grid range needed to cover the viewport
+         // BBox of the stroke
+         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+         if (points.length > 0) {
+             for (const p of points) {
+                 if (p.x < minX) minX = p.x;
+                 if (p.x > maxX) maxX = p.x;
+                 if (p.y < minY) minY = p.y;
+                 if (p.y > maxY) maxY = p.y;
+             }
+         } else {
+             minX = 0; maxX = 0; minY = 0; maxY = 0;
+         }
+         
+         const pad = strokeWidth; 
+         // Calculate which grid indices (ix, iy) place the stroke inside the canvas [0,0, width, height]
+         // Stroke range shifted: [minX + ix*gap, maxX + ix*gap]
+         // Overlap condition: (minX + ix*gap < width) AND (maxX + ix*gap > 0)
+         
+         const startX = Math.floor((-maxX - pad) / gap);
+         const endX = Math.ceil((width - minX + pad) / gap);
+         const startY = Math.floor((-maxY - pad) / gap);
+         const endY = Math.ceil((height - minY + pad) / gap);
+
+         for(let x = startX; x <= endX; x++) {
+             for(let y = startY; y <= endY; y++) {
                 drawInstance(0, () => {
                     ctx.translate(x * gap, y * gap);
                 });
@@ -617,9 +644,17 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         break;
       case SymmetryType.GRID:
          const gap = symmetry.gridGap || 100;
-         const gridRange = 3; 
-         for(let gx = -gridRange; gx <= gridRange; gx++) {
-             for(let gy = -gridRange; gy <= gridRange; gy++) {
+         
+         // Dynamically cover screen
+         // The cursor has essentially 0 width/height for BBox purposes (or small radius)
+         const pad = radius + 2; 
+         const gStartX = Math.floor((-x - pad) / gap);
+         const gEndX = Math.ceil((width - x + pad) / gap);
+         const gStartY = Math.floor((-y - pad) / gap);
+         const gEndY = Math.ceil((height - y + pad) / gap);
+
+         for(let gx = gStartX; gx <= gEndX; gx++) {
+             for(let gy = gStartY; gy <= gEndY; gy++) {
                 run(() => {
                     ctx.translate(gx * gap, gy * gap);
                 });
