@@ -1,9 +1,10 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Stroke, Point, SymmetryType, AnimationMode } from '../types';
+import { Stroke, Point, SymmetryType, AnimationMode, PrecomputedRibbon } from '../types';
+import { computeRibbon } from '../App'; // Imported for the live preview stroke
 
 interface DrawingCanvasProps {
-  currentSettings: Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp'>;
+  currentSettings: Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp' | 'precomputed'>;
   strokes: Stroke[];
   onAddStroke: (points: Point[]) => void;
   selectedStrokeId: string | null;
@@ -33,6 +34,12 @@ const getPathLength = (points: Point[]): number => {
   }
   return length;
 };
+
+// Interpolates a point between two points based on ratio t (0-1)
+const lerpPoint = (p1: Point, p2: Point, t: number): Point => ({
+    x: p1.x + (p2.x - p1.x) * t,
+    y: p1.y + (p2.y - p1.y) * t
+});
 
 const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ 
   currentSettings, 
@@ -76,6 +83,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const HIT_THRESHOLD = 15; // px
 
     const checkStroke = (stroke: Stroke, testPoint: Point) => {
+      // Simple bounding box check could go here for further optimization
       for(let i=0; i<stroke.points.length-1; i++) {
         if(distToSegment(testPoint, stroke.points[i], stroke.points[i+1]) < Math.max(HIT_THRESHOLD, stroke.width)) {
           return true;
@@ -172,7 +180,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     mousePosRef.current = point;
     
-    // If physics is enabled, snap to mouse initially so we don't draw a line from 0,0
+    // If physics is enabled, snap to mouse initially
     if (currentSettings.orbit.enabled) {
         physicsStateRef.current.pos = { ...point };
         physicsStateRef.current.vel = { x: 0, y: 0 };
@@ -220,91 +228,90 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   // --- Rendering Logic ---
 
+  // OPTIMIZED RENDERER: Uses pre-calculated geometry (Ribbon)
   const renderStrokePath = (
     ctx: CanvasRenderingContext2D, 
-    points: Point[], 
+    precomputed: PrecomputedRibbon,
+    points: Point[], // Still needed for selection highlight
     startLength: number,
     endLength: number,
     totalLength: number,
     baseWidth: number,
-    taper: number,
     isSelected: boolean = false
   ) => {
-    if (points.length < 2) return;
+    if (precomputed.left.length < 2) return;
     if (endLength <= startLength) return;
 
-    // --- Path Construction Logic ---
-    const polygonPointsLeft: Point[] = [];
-    const polygonPointsRight: Point[] = [];
+    const { left, right, cumulativeLengths } = precomputed;
+    const count = cumulativeLengths.length;
 
-    let currentDist = 0;
+    // Binary search for start and end indices is faster than linear scan for large arrays,
+    // but linear is fine for < 100 points. Let's do a simple scan for robustness.
     
-    const taperLen = totalLength * (taper / 100);
+    let startIndex = 0;
+    let endIndex = count - 1;
 
-    for (let i = 0; i < points.length; i++) {
-        const p = points[i];
-        
-        if (i > 0) {
-            currentDist += dist(points[i-1], p);
-        }
-
-        if (currentDist < startLength && i < points.length - 1 && (currentDist + dist(p, points[i+1])) < startLength) {
-             continue;
-        }
-        if (currentDist > endLength && i > 0 && (currentDist - dist(points[i-1], p)) > endLength) {
-             break;
-        }
-
-        let nx = 0;
-        let ny = 0;
-        
-        if (i === 0) {
-            const next = points[i+1];
-            const dx = next.x - p.x;
-            const dy = next.y - p.y;
-            const len = Math.sqrt(dx*dx + dy*dy);
-            nx = -dy / len;
-            ny = dx / len;
-        } else if (i === points.length - 1) {
-            const prev = points[i-1];
-            const dx = p.x - prev.x;
-            const dy = p.y - prev.y;
-            const len = Math.sqrt(dx*dx + dy*dy);
-            nx = -dy / len;
-            ny = dx / len;
-        } else {
-            const prev = points[i-1];
-            const next = points[i+1];
-            const dx = next.x - prev.x;
-            const dy = next.y - prev.y;
-            const len = Math.sqrt(dx*dx + dy*dy);
-            nx = -dy / len;
-            ny = dx / len;
-        }
-
-        let currentWidth = baseWidth;
-        if (taperLen > 0) {
-            if (currentDist < taperLen) {
-                currentWidth = baseWidth * (currentDist / taperLen);
-            } else if (currentDist > totalLength - taperLen) {
-                currentWidth = baseWidth * ((totalLength - currentDist) / taperLen);
-            }
-        }
-        currentWidth = Math.max(0, currentWidth);
-        const halfWidth = currentWidth / 2;
-
-        polygonPointsLeft.push({
-            x: p.x + nx * halfWidth,
-            y: p.y + ny * halfWidth
-        });
-        polygonPointsRight.push({
-            x: p.x - nx * halfWidth,
-            y: p.y - ny * halfWidth
-        });
+    // Find closest indices (Performance: O(N), could be O(log N) but N is small)
+    while (startIndex < count - 1 && cumulativeLengths[startIndex + 1] < startLength) {
+        startIndex++;
+    }
+    while (endIndex > 0 && cumulativeLengths[endIndex - 1] > endLength) {
+        endIndex--;
     }
 
-    if (polygonPointsLeft.length < 2) return;
+    // Determine interpolation factors for smooth cutoff
+    // This prevents the stroke from "jumping" between vertices
+    const startSegmentLen = cumulativeLengths[startIndex + 1] - cumulativeLengths[startIndex];
+    const endSegmentLen = cumulativeLengths[endIndex] - cumulativeLengths[endIndex - 1];
+    
+    let startT = 0;
+    if (startSegmentLen > 0) {
+        startT = (startLength - cumulativeLengths[startIndex]) / startSegmentLen;
+    }
+    // Clamp
+    startT = Math.max(0, Math.min(1, startT));
+    
+    let endT = 1; // Default to full segment
+    if (endIndex > 0 && endSegmentLen > 0) {
+        endT = (endLength - cumulativeLengths[endIndex - 1]) / endSegmentLen;
+    }
+    endT = Math.max(0, Math.min(1, endT));
 
+    // Construct the polygon
+    ctx.beginPath();
+    
+    // 1. Interpolated Start Points
+    const pStartLeft = lerpPoint(left[startIndex], left[startIndex + 1] || left[startIndex], startT);
+    const pStartRight = lerpPoint(right[startIndex], right[startIndex + 1] || right[startIndex], startT);
+
+    // 2. Interpolated End Points
+    // Careful: endIndex indexes the point *after* the segment
+    const idxEndBase = Math.max(0, endIndex - 1);
+    const idxEndNext = endIndex;
+    const pEndLeft = lerpPoint(left[idxEndBase], left[idxEndNext], endT);
+    const pEndRight = lerpPoint(right[idxEndBase], right[idxEndNext], endT);
+
+    // Trace Outline
+    ctx.moveTo(pStartLeft.x, pStartLeft.y);
+
+    // Left side forward
+    for (let i = startIndex + 1; i < endIndex; i++) {
+        ctx.lineTo(left[i].x, left[i].y);
+    }
+    
+    ctx.lineTo(pEndLeft.x, pEndLeft.y);
+    ctx.lineTo(pEndRight.x, pEndRight.y);
+
+    // Right side backward
+    for (let i = endIndex - 1; i > startIndex; i--) {
+        ctx.lineTo(right[i].x, right[i].y);
+    }
+
+    ctx.lineTo(pStartRight.x, pStartRight.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Selection Highlight (Draws the spine)
     if (isSelected) {
       ctx.save();
       ctx.shadowColor = 'white';
@@ -316,6 +323,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       ctx.beginPath();
       let started = false;
       let d = 0;
+      
+      // We can use the same indexing logic roughly for the spine
+      // Just drawing the whole spine within range is easier
       for (let i = 0; i < points.length; i++) {
          if (i>0) d += dist(points[i-1], points[i]);
          if (d >= startLength && d <= endLength) {
@@ -326,18 +336,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       ctx.stroke();
       ctx.restore();
     }
-
-    ctx.beginPath();
-    ctx.moveTo(polygonPointsLeft[0].x, polygonPointsLeft[0].y);
-    for (let i = 1; i < polygonPointsLeft.length; i++) {
-        ctx.lineTo(polygonPointsLeft[i].x, polygonPointsLeft[i].y);
-    }
-    ctx.lineTo(polygonPointsRight[polygonPointsRight.length - 1].x, polygonPointsRight[polygonPointsRight.length - 1].y);
-    for (let i = polygonPointsRight.length - 2; i >= 0; i--) {
-        ctx.lineTo(polygonPointsRight[i].x, polygonPointsRight[i].y);
-    }
-    ctx.closePath();
-    ctx.fill();
   };
 
   const renderSymmetries = (
@@ -349,63 +347,72 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     isSelected: boolean,
     forceFullDraw: boolean = false
   ) => {
-    const { symmetry, color, endColor, width: strokeWidth, taper, speed, phase, points, totalLength, animationMode } = stroke;
+    const { symmetry, color, endColor, width: strokeWidth, points, totalLength, animationMode, precomputed } = stroke;
     const centerX = width / 2;
     const centerY = height / 2;
 
     if (endColor && points.length > 1) {
         const startP = points[0];
         const endP = points[points.length - 1];
-        if (Math.abs(startP.x - endP.x) < 0.1 && Math.abs(startP.y - endP.y) < 0.1) {
-             ctx.fillStyle = color;
-        } else {
-             const gradient = ctx.createLinearGradient(startP.x, startP.y, endP.x, endP.y);
-             gradient.addColorStop(0, color);
-             gradient.addColorStop(1, endColor);
-             ctx.fillStyle = gradient;
-        }
+        // Optimization: Create gradient once per frame per stroke, not per symmetry if possible,
+        // but coordinates change. Keeping this is okay as it's not the main bottleneck.
+        const gradient = ctx.createLinearGradient(startP.x, startP.y, endP.x, endP.y);
+        gradient.addColorStop(0, color);
+        gradient.addColorStop(1, endColor);
+        ctx.fillStyle = gradient;
     } else {
         ctx.fillStyle = color;
     }
 
-    ctx.lineWidth = 1; 
+    // No strokeStyle needed for fill, unless selection
+    
+    // Calculate animation state once per stroke
+    let startLen = 0;
+    let endLen = totalLength;
 
-    const baseProgress = (time * speed + phase); 
+    if (!forceFullDraw) {
+        const baseProgress = (time * stroke.speed + stroke.phase); 
+        // We pass the phase offset to the drawInstance, so we calculate specific lengths inside the loop if needed?
+        // Actually, for Radial symmetry with phase shift, the lengths differ per copy.
+        // So we must calculate lengths inside the symmetry loop.
+    }
 
     const drawInstance = (phaseOffset: number, transformFn: () => void) => {
         ctx.save();
         transformFn();
         
-        let startLen = 0;
-        let endLen = totalLength;
+        let localStart = 0;
+        let localEnd = totalLength;
 
         if (!forceFullDraw) {
-            const totalPhase = baseProgress + phaseOffset;
+            const totalPhase = (time * stroke.speed + stroke.phase) + phaseOffset;
             
             if (animationMode === AnimationMode.YOYO) {
                  let cycle = totalPhase % 2;
                  if (cycle < 0) cycle += 2;
                  const localProgress = cycle > 1 ? 2 - cycle : cycle;
-                 endLen = totalLength * localProgress;
-                 startLen = 0;
+                 localEnd = totalLength * localProgress;
+                 localStart = 0;
             } else if (animationMode === AnimationMode.FLOW) {
                  let cycle = totalPhase % 2;
                  if (cycle < 0) cycle += 2;
                  if (cycle <= 1) {
-                     startLen = 0;
-                     endLen = totalLength * cycle;
+                     localStart = 0;
+                     localEnd = totalLength * cycle;
                  } else {
-                     startLen = totalLength * (cycle - 1);
-                     endLen = totalLength;
+                     localStart = totalLength * (cycle - 1);
+                     localEnd = totalLength;
                  }
             } else {
                  let localProgress = totalPhase % 1;
                  if (localProgress < 0) localProgress += 1;
-                 endLen = totalLength * localProgress;
-                 startLen = 0;
+                 localEnd = totalLength * localProgress;
+                 localStart = 0;
             }
         }
-        renderStrokePath(ctx, points, startLen, endLen, totalLength, strokeWidth, taper || 0, isSelected);
+        
+        // Use optimized renderer
+        renderStrokePath(ctx, precomputed, points, localStart, localEnd, totalLength, strokeWidth, isSelected);
         ctx.restore();
     };
 
@@ -472,10 +479,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   };
 
   const renderGhostCursor = (ctx: CanvasRenderingContext2D, width: number, height: number, actualCursor: Point) => {
-    // If physics is enabled, we draw the physics pos, otherwise mouse pos.
-    // However, if physics is ON, the actual cursor is the Mouse, and the ghost is the weight.
-    // The physics simulation updates physicsStateRef directly.
-    
     // Determine the point to replicate
     let x, y;
     if (currentSettings.orbit.enabled) {
@@ -597,15 +600,11 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (currentSettings.orbit.enabled) {
         const mouse = mousePosRef.current;
         if (mouse || isDrawing) {
-            // Target is mouse if available, else last known position (stops drifting when mouse leaves, but momentum continues)
             const target = mouse || physicsStateRef.current.pos;
-            
-            // Constants
             const mass = Math.max(0.1, currentSettings.orbit.mass);
-            const k = 0.1 / mass; // Stiffness (lower mass = stiffer = faster tracking)
+            const k = 0.1 / mass; 
             const friction = currentSettings.orbit.friction;
 
-            // F = -k * x
             const dx = target.x - physicsStateRef.current.pos.x;
             const dy = target.y - physicsStateRef.current.pos.y;
             
@@ -618,17 +617,15 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
             physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
             
-            // If drawing, we sample based on frames for smooth curves
             if (isDrawing) {
                 const newP = { ...physicsStateRef.current.pos };
                 const lastP = currentPathRef.current[currentPathRef.current.length - 1];
-                if (!lastP || dist(lastP, newP) > 1) { // Finer granularity for physics
+                if (!lastP || dist(lastP, newP) > 1) { 
                     currentPathRef.current.push(newP);
                 }
             }
         }
     } else {
-        // If orbit is disabled, ensure ghost cursor syncs to mouse immediately
         if (mousePosRef.current) {
             physicsStateRef.current.pos = { ...mousePosRef.current };
             physicsStateRef.current.vel = { x: 0, y: 0 };
@@ -639,22 +636,34 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     
     // Render existing strokes
     strokesRef.current.forEach(stroke => {
-      renderSymmetries(ctx, stroke, canvas.width, canvas.height, sec, stroke.id === selectedStrokeId);
+      // Safety check for legacy or invalid strokes without precomputed data
+      if (stroke.precomputed) {
+          renderSymmetries(ctx, stroke, canvas.width, canvas.height, sec, stroke.id === selectedStrokeId);
+      }
     });
 
     // Render current drawing stroke (Live Preview)
     if (isDrawing && currentPathRef.current.length > 1) {
         const points = currentPathRef.current;
         const tempTotalLength = getPathLength(points);
+        
+        // Optimize: For preview, we generate geometry on the fly. 
+        // This is fine for 1 stroke.
+        const previewRibbon = computeRibbon(points, { 
+            width: currentSettings.width, 
+            taper: currentSettings.taper || 0 
+        });
+
         const previewStroke: Stroke = {
             ...currentSettings,
-            smoothing: 0, // No smoothing during draw for perf
+            smoothing: 0, 
             simplification: 0,
             id: 'preview',
             points: points,
             rawPoints: points,
             totalLength: tempTotalLength,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            precomputed: previewRibbon
         };
         renderSymmetries(ctx, previewStroke, canvas.width, canvas.height, sec, false, true);
     }

@@ -46,12 +46,20 @@ export interface StrokeSettings {
   orbit: OrbitSettings;
 }
 
+// Optimization: Store the calculated polygon edges to avoid re-computing normals every frame
+export interface PrecomputedRibbon {
+  left: Point[];
+  right: Point[];
+  cumulativeLengths: number[];
+}
+
 export interface Stroke extends StrokeSettings {
   id: string;
   points: Point[];     // The processed/rendered points
   rawPoints: Point[];  // The original captured points
   totalLength: number;
   timestamp: number;
+  precomputed: PrecomputedRibbon; // Cached geometry
 }
 
 // Pre-calculated path segment for efficient rendering

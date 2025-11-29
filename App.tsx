@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import DrawingCanvas from './components/DrawingCanvas';
 import ControlPanel from './components/ControlPanel';
-import { Stroke, SymmetryType, AnimationMode, Point } from './types';
+import { Stroke, SymmetryType, AnimationMode, Point, PrecomputedRibbon, StrokeSettings } from './types';
 
 // --- Geometry Helpers ---
 
@@ -93,6 +93,73 @@ const processPoints = (points: Point[], smoothing: number, simplification: numbe
   return smoothed;
 };
 
+// Pre-calculate the Ribbon (Left/Right polygon edges) for the entire stroke
+export const computeRibbon = (points: Point[], settings: { width: number, taper: number }): PrecomputedRibbon => {
+    const left: Point[] = [];
+    const right: Point[] = [];
+    const cumulativeLengths: number[] = [0];
+    
+    if (points.length < 2) return { left: [], right: [], cumulativeLengths: [] };
+
+    const totalLength = getPathLength(points);
+    const taperLen = totalLength * (settings.taper / 100);
+    const baseWidth = settings.width;
+
+    let currentDist = 0;
+
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        if (i > 0) {
+            currentDist += dist(points[i-1], p);
+            cumulativeLengths.push(currentDist);
+        }
+
+        let nx = 0;
+        let ny = 0;
+
+        if (i === 0) {
+            const next = points[i+1];
+            const dx = next.x - p.x;
+            const dy = next.y - p.y;
+            const len = Math.sqrt(dx*dx + dy*dy) || 1;
+            nx = -dy / len;
+            ny = dx / len;
+        } else if (i === points.length - 1) {
+            const prev = points[i-1];
+            const dx = p.x - prev.x;
+            const dy = p.y - prev.y;
+            const len = Math.sqrt(dx*dx + dy*dy) || 1;
+            nx = -dy / len;
+            ny = dx / len;
+        } else {
+            // Average normal for smooth joins
+            const prev = points[i-1];
+            const next = points[i+1];
+            const dx = next.x - prev.x;
+            const dy = next.y - prev.y;
+            const len = Math.sqrt(dx*dx + dy*dy) || 1;
+            nx = -dy / len;
+            ny = dx / len;
+        }
+
+        let currentWidth = baseWidth;
+        if (taperLen > 0) {
+            if (currentDist < taperLen) {
+                currentWidth = baseWidth * (currentDist / taperLen);
+            } else if (currentDist > totalLength - taperLen) {
+                currentWidth = baseWidth * ((totalLength - currentDist) / taperLen);
+            }
+        }
+        currentWidth = Math.max(0.1, currentWidth); // Ensure it doesn't disappear completely for logic
+        const halfWidth = currentWidth / 2;
+
+        left.push({ x: p.x + nx * halfWidth, y: p.y + ny * halfWidth });
+        right.push({ x: p.x - nx * halfWidth, y: p.y - ny * halfWidth });
+    }
+
+    return { left, right, cumulativeLengths };
+};
+
 function App() {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [isUIHovered, setIsUIHovered] = useState(false);
@@ -103,7 +170,7 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Default settings for NEW strokes
-  const [currentSettings, setCurrentSettings] = useState<Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp'>>({
+  const [currentSettings, setCurrentSettings] = useState<Omit<Stroke, 'id' | 'points' | 'rawPoints' | 'totalLength' | 'timestamp' | 'precomputed'>>({
     color: '#a855f7', // Purple 500
     endColor: undefined, // Default no gradient
     width: 4,
@@ -128,6 +195,7 @@ function App() {
 
   const activeStroke = selectedStrokeId ? strokes.find(s => s.id === selectedStrokeId) : null;
   
+  // Flatten panel settings for display
   const panelSettings = activeStroke || currentSettings;
 
   const updatePanelSettings = (updates: any) => {
@@ -143,8 +211,11 @@ function App() {
                     mergedSettings.orbit = { ...s.orbit, ...updates.orbit };
                 }
 
-                // If geometry parameters changed, re-process points
-                if (updates.smoothing !== undefined || updates.simplification !== undefined) {
+                // Check if we need to recalculate geometry
+                const needsPointProcess = updates.smoothing !== undefined || updates.simplification !== undefined;
+                const needsRibbonRecalc = needsPointProcess || updates.width !== undefined || updates.taper !== undefined;
+
+                if (needsPointProcess) {
                     const newPoints = processPoints(
                         s.rawPoints, 
                         mergedSettings.smoothing, 
@@ -152,6 +223,13 @@ function App() {
                     );
                     mergedSettings.points = newPoints;
                     mergedSettings.totalLength = getPathLength(newPoints);
+                }
+                
+                if (needsRibbonRecalc) {
+                    mergedSettings.precomputed = computeRibbon(mergedSettings.points, {
+                        width: mergedSettings.width,
+                        taper: mergedSettings.taper
+                    });
                 }
                 
                 return mergedSettings;
@@ -176,6 +254,9 @@ function App() {
   const handleAddStroke = (rawPoints: Point[]) => {
     const processedPoints = processPoints(rawPoints, currentSettings.smoothing, currentSettings.simplification);
     
+    // Initial Ribbon Calculation
+    const ribbon = computeRibbon(processedPoints, { width: currentSettings.width, taper: currentSettings.taper });
+
     const newStroke: Stroke = {
       ...currentSettings,
       id: crypto.randomUUID(),
@@ -183,6 +264,7 @@ function App() {
       points: processedPoints,
       totalLength: getPathLength(processedPoints),
       timestamp: Date.now(),
+      precomputed: ribbon
     };
     setStrokes(prev => [...prev, newStroke]);
   };
@@ -246,9 +328,10 @@ function App() {
   };
 
   const handleExportJSON = () => {
-    // Only save what's necessary (we can reconstruct points from rawPoints if needed, 
-    // but saving points is safer for exact reproduction if algorithm changes)
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(strokes, null, 2));
+    // We only need to export the data required to reconstruct the stroke
+    // Precomputed data can be stripped to save space, as it's derivative
+    const exportData = strokes.map(({ precomputed, ...rest }) => rest);
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
     const link = document.createElement('a');
     link.href = dataStr;
     link.download = `chronosketch-project-${Date.now()}.json`;
@@ -268,15 +351,32 @@ function App() {
             try {
                 const json = JSON.parse(event.target?.result as string);
                 if (Array.isArray(json)) {
-                    // Backwards compatibility check
-                    const fixedStrokes = json.map((s: any) => ({
-                        ...s,
-                        rawPoints: s.rawPoints || s.points,
-                        smoothing: s.smoothing ?? 0,
-                        simplification: s.simplification ?? 0,
-                        taper: s.taper ?? 0,
-                        orbit: s.orbit || { enabled: false, mass: 2, friction: 0.95 }
-                    }));
+                    // Backwards compatibility and Hydration
+                    const fixedStrokes = json.map((s: any) => {
+                        const rawPoints = s.rawPoints || s.points;
+                        const smoothing = s.smoothing ?? 0;
+                        const simplification = s.simplification ?? 0;
+                        
+                        // Ensure points are processed if not present or if settings match
+                        // But usually we trust rawPoints and re-process to be safe
+                        const points = processPoints(rawPoints, smoothing, simplification);
+                        const width = s.width || 4;
+                        const taper = s.taper || 0;
+
+                        return {
+                            ...s,
+                            rawPoints: rawPoints,
+                            points: points,
+                            smoothing,
+                            simplification,
+                            taper,
+                            width,
+                            totalLength: getPathLength(points),
+                            orbit: s.orbit || { enabled: false, mass: 2, friction: 0.95 },
+                            // Hydrate the precomputed ribbon
+                            precomputed: computeRibbon(points, { width, taper })
+                        };
+                    });
                     setStrokes(fixedStrokes);
                     setSelectedStrokeId(null);
                 } else {
