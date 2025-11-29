@@ -24,7 +24,9 @@ import {
   Save,
   ChevronDown,
   ChevronRight,
-  Wand2
+  Wand2,
+  Orbit,
+  AlignJustify
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -43,7 +45,18 @@ interface ControlPanelProps {
   onExportJSON: () => void;
   onImportJSON: () => void;
   onAIGenerateStroke: (normalizedPoints: Point[]) => void;
+  onRedistributePhases: () => void;
 }
+
+const DEFAULT_PALETTES = [
+  ['#ffbe0b', '#fb5607', '#ff006e', '#8338ec', '#3a86ff'], // Sunset
+  ['#f72585', '#7209b7', '#3a0ca3', '#4361ee', '#4cc9f0'], // Neon
+  ['#ef476f', '#ffd166', '#06d6a0', '#118ab2', '#073b4c'], // Tropical
+  ['#264653', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51'], // Earth
+  ['#003049', '#d62828', '#f77f00', '#fcbf49', '#eae2b7'], // Retro
+  ['#cdb4db', '#ffc8dd', '#ffafcc', '#bde0fe', '#a2d2ff'], // Pastel
+  ['#22223b', '#4a4e69', '#9a8c98', '#c9ada7', '#f2e9e4'], // Muted
+];
 
 const ControlPanel: React.FC<ControlPanelProps> = ({ 
   settings, 
@@ -60,7 +73,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onSnapshot,
   onExportJSON,
   onImportJSON,
-  onAIGenerateStroke
+  onAIGenerateStroke,
+  onRedistributePhases
 }) => {
   const [activeColorTarget, setActiveColorTarget] = useState<'color' | 'endColor'>('color');
   const [palettePrompt, setPalettePrompt] = useState('');
@@ -71,9 +85,13 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const [paletteHistory, setPaletteHistory] = useState<string[][]>(() => {
     try {
       const saved = localStorage.getItem('chronosketch_palettes');
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return DEFAULT_PALETTES;
     } catch (e) {
-      return [];
+      return DEFAULT_PALETTES;
     }
   });
 
@@ -86,6 +104,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     style: true,
     motion: false,
     symmetry: true,
+    orbit: false,
     project: false
   });
 
@@ -100,6 +119,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const updateSymmetry = <K extends keyof typeof settings.symmetry>(key: K, value: typeof settings.symmetry[K]) => {
     setSettings({
       symmetry: { ...settings.symmetry, [key]: value }
+    });
+  };
+
+  const updateOrbit = <K extends keyof typeof settings.orbit>(key: K, value: typeof settings.orbit[K]) => {
+    setSettings({
+        orbit: { ...settings.orbit, [key]: value }
     });
   };
 
@@ -133,6 +158,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       console.error("Failed to generate palette", e);
     } finally {
       setIsGeneratingPalette(false);
+      setPalettePrompt('');
     }
   };
 
@@ -234,175 +260,200 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
            <SectionHeader id="style" label="Colors & Style" icon={Palette} />
            {openSections.style && (
              <div className="px-3 pb-3 space-y-3 animate-in slide-in-from-top-2 duration-200">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">Enable Gradient</span>
-                  <input 
-                      type="checkbox" 
-                      checked={!!settings.endColor} 
-                      onChange={(e) => {
-                          if (e.target.checked) {
-                              updateSetting('endColor', settings.color);
-                              setActiveColorTarget('endColor');
-                          } else {
-                              updateSetting('endColor', undefined);
-                              setActiveColorTarget('color');
-                          }
-                      }}
-                      className={`w-4 h-4 rounded cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-purple-500'}`}
-                  />
-                </div>
                 
-                <div className="flex gap-2 items-center">
-                    {/* Start Color */}
-                    <div 
-                        className={`relative p-1 rounded border-2 transition-all cursor-pointer ${activeColorTarget === 'color' ? 'border-white bg-slate-700' : 'border-transparent hover:bg-slate-800'}`}
-                        onClick={() => setActiveColorTarget('color')}
-                    >
-                        <div className="w-8 h-8 rounded" style={{ backgroundColor: settings.color }}></div>
+                {/* Palettes (Moved to Top) */}
+                <div className="space-y-2">
+                    <div className="flex justify-between items-center text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                        <span>Select Palette Color</span>
+                        <button onClick={() => setPaletteHistory(DEFAULT_PALETTES)} className="hover:text-purple-400 transition-colors" title="Reset to defaults">Reset</button>
+                    </div>
+                    
+                    <div className="space-y-1.5 max-h-[160px] overflow-y-auto custom-scrollbar pr-1 bg-slate-800/30 rounded-lg p-1 border border-slate-800">
+                        {paletteHistory.map((palette, pIdx) => (
+                            <div key={pIdx} className="flex gap-0.5 group">
+                                <div className="flex-1 flex rounded overflow-hidden border border-slate-700/50 group-hover:border-slate-500 transition-colors">
+                                    {palette.map((color, idx) => (
+                                        <button 
+                                            key={idx}
+                                            onClick={() => updateSetting(activeColorTarget, color)}
+                                            className="flex-1 h-6 hover:opacity-80 transition-opacity relative group/color"
+                                            style={{ backgroundColor: color }}
+                                            title={color}
+                                        />
+                                    ))}
+                                </div>
+                                <button 
+                                    onClick={() => setPaletteHistory(prev => prev.filter((_, i) => i !== pIdx))}
+                                    className="w-5 flex items-center justify-center text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title="Remove palette"
+                                >
+                                    <XCircle size={12} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* AI Generator Compact */}
+                    <div className="flex gap-1">
                         <input 
-                            type="color" 
-                            value={settings.color}
-                            onChange={(e) => updateSetting('color', e.target.value)}
-                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                          type="text" 
+                          placeholder="New theme (e.g. 'vaporwave')" 
+                          value={palettePrompt}
+                          onChange={(e) => setPalettePrompt(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleGeneratePalette()}
+                          className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500 placeholder:text-slate-600"
+                        />
+                        <button 
+                          onClick={handleGeneratePalette}
+                          disabled={isGeneratingPalette}
+                          className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-purple-400 hover:text-purple-300 rounded p-1.5 transition-colors disabled:opacity-50"
+                          title="Generate AI Palette"
+                        >
+                          <Sparkles size={14} className={isGeneratingPalette ? "animate-spin" : ""} />
+                        </button>
+                    </div>
+                </div>
+
+                <div className="h-px bg-slate-800/50 my-1" />
+
+                {/* Active Color Controls */}
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500 font-medium">Stroke Settings</span>
+                        <div className="flex items-center gap-2">
+                             <span className="text-[10px] text-slate-600">Gradient</span>
+                             <input 
+                                  type="checkbox" 
+                                  checked={!!settings.endColor} 
+                                  onChange={(e) => {
+                                      if (e.target.checked) {
+                                          updateSetting('endColor', settings.color);
+                                          setActiveColorTarget('endColor');
+                                      } else {
+                                          updateSetting('endColor', undefined);
+                                          setActiveColorTarget('color');
+                                      }
+                                  }}
+                                  className={`w-3 h-3 rounded cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-purple-500'}`}
+                              />
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3 items-center">
+                        {/* Start Color Box */}
+                        <div className="flex flex-col items-center gap-1">
+                            <div 
+                                className={`relative w-10 h-10 rounded-lg shadow-sm border-2 transition-all cursor-pointer group ${activeColorTarget === 'color' ? 'border-white ring-2 ring-purple-500/30' : 'border-slate-600 hover:border-slate-500'}`}
+                                onClick={() => setActiveColorTarget('color')}
+                            >
+                                <div className="absolute inset-0.5 rounded-md" style={{ backgroundColor: settings.color }}></div>
+                                {/* Native Picker Hidden but accessible */}
+                                <input 
+                                    type="color" 
+                                    value={settings.color}
+                                    onChange={(e) => updateSetting('color', e.target.value)}
+                                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                    title="Fine tune color"
+                                />
+                                {activeColorTarget === 'color' && <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-white rounded-full shadow border border-slate-200"></div>}
+                            </div>
+                            <span className={`text-[9px] font-bold ${activeColorTarget === 'color' ? 'text-white' : 'text-slate-500'}`}>START</span>
+                        </div>
+
+                        {settings.endColor ? (
+                            <>
+                                <ArrowRight size={14} className="text-slate-600"/>
+                                {/* End Color Box */}
+                                 <div className="flex flex-col items-center gap-1">
+                                    <div 
+                                        className={`relative w-10 h-10 rounded-lg shadow-sm border-2 transition-all cursor-pointer group ${activeColorTarget === 'endColor' ? 'border-white ring-2 ring-purple-500/30' : 'border-slate-600 hover:border-slate-500'}`}
+                                        onClick={() => setActiveColorTarget('endColor')}
+                                    >
+                                        <div className="absolute inset-0.5 rounded-md" style={{ backgroundColor: settings.endColor }}></div>
+                                        <input 
+                                            type="color" 
+                                            value={settings.endColor}
+                                            onChange={(e) => updateSetting('endColor', e.target.value)}
+                                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                            title="Fine tune color"
+                                        />
+                                        {activeColorTarget === 'endColor' && <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-white rounded-full shadow border border-slate-200"></div>}
+                                    </div>
+                                    <span className={`text-[9px] font-bold ${activeColorTarget === 'endColor' ? 'text-white' : 'text-slate-500'}`}>END</span>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="flex-1 h-px bg-slate-800 mx-2"></div>
+                        )}
+                        
+                        {/* Thickness Slider - Compact */}
+                        <div className="flex-1 ml-2">
+                          <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>Width</span>
+                            <span>{settings.width}px</span>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="1" 
+                            max="50" 
+                            value={settings.width}
+                            onChange={(e) => updateSetting('width', Number(e.target.value))}
+                            className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-purple-500'}`}
+                          />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Geometry Controls */}
+                <div className="bg-slate-800/30 rounded-lg p-2 space-y-2 border border-slate-800/50">
+                    <div>
+                        <label className="flex justify-between text-[10px] text-slate-500 mb-1">
+                          <span>Taper</span>
+                          <span>{settings.taper ? settings.taper : 0}%</span>
+                        </label>
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="50" 
+                          step="5"
+                          value={settings.taper || 0}
+                          onChange={(e) => updateSetting('taper', Number(e.target.value))}
+                          className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-teal-500'}`}
                         />
                     </div>
 
-                    {settings.endColor && (
-                        <>
-                        <ArrowRight size={16} className="text-slate-500"/>
-                        {/* End Color */}
-                        <div 
-                            className={`relative p-1 rounded border-2 transition-all cursor-pointer ${activeColorTarget === 'endColor' ? 'border-white bg-slate-700' : 'border-transparent hover:bg-slate-800'}`}
-                            onClick={() => setActiveColorTarget('endColor')}
-                        >
-                            <div className="w-8 h-8 rounded" style={{ backgroundColor: settings.endColor }}></div>
-                            <input 
-                                type="color" 
-                                value={settings.endColor}
-                                onChange={(e) => updateSetting('endColor', e.target.value)}
-                                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                            />
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>Smooth</span>
+                            <span>{settings.smoothing}</span>
+                          </label>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="5" 
+                            step="1"
+                            value={settings.smoothing}
+                            onChange={(e) => updateSetting('smoothing', Number(e.target.value))}
+                            className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-indigo-500'}`}
+                          />
                         </div>
-                        </>
-                    )}
-                    
-                    <div className="flex-1 ml-2 flex flex-col justify-center">
-                      <label className="text-xs text-slate-500 mb-1">Thickness</label>
-                      <input 
-                        type="range" 
-                        min="1" 
-                        max="50" 
-                        value={settings.width}
-                        onChange={(e) => updateSetting('width', Number(e.target.value))}
-                        className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-purple-500'}`}
-                      />
-                    </div>
-                </div>
-
-                <div className="pt-2">
-                    <label className="flex justify-between text-xs text-slate-500 mb-1">
-                      <span>Taper Ends</span>
-                      <span>{settings.taper ? settings.taper : 0}%</span>
-                    </label>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="50" 
-                      step="5"
-                      value={settings.taper || 0}
-                      onChange={(e) => updateSetting('taper', Number(e.target.value))}
-                      className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-teal-500'}`}
-                      title="Tapers the stroke width at start and end"
-                    />
-                </div>
-
-                {/* Path Smoothing & Simplification */}
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                    <div>
-                      <label className="flex justify-between text-xs text-slate-500 mb-1">
-                        <span>Smooth</span>
-                        <span>{settings.smoothing}</span>
-                      </label>
-                      <input 
-                        type="range" 
-                        min="0" 
-                        max="5" 
-                        step="1"
-                        value={settings.smoothing}
-                        onChange={(e) => updateSetting('smoothing', Number(e.target.value))}
-                        className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-indigo-500'}`}
-                        title="Smooths jagged corners"
-                      />
-                    </div>
-                    <div>
-                      <label className="flex justify-between text-xs text-slate-500 mb-1">
-                        <span>Simplify</span>
-                        <span>{settings.simplification}</span>
-                      </label>
-                      <input 
-                        type="range" 
-                        min="0" 
-                        max="20" 
-                        step="1"
-                        value={settings.simplification}
-                        onChange={(e) => updateSetting('simplification', Number(e.target.value))}
-                        className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-indigo-500'}`}
-                        title="Removes redundant points"
-                      />
-                    </div>
-                </div>
-
-                {/* AI Palette Generator */}
-                <div className="bg-slate-800/50 p-2 rounded-lg border border-slate-700 space-y-2 mt-2">
-                  <div className="flex gap-1">
-                    <input 
-                      type="text" 
-                      placeholder="Theme (e.g. 'neon rain')" 
-                      value={palettePrompt}
-                      onChange={(e) => setPalettePrompt(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleGeneratePalette()}
-                      className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
-                    />
-                    <button 
-                      onClick={handleGeneratePalette}
-                      disabled={isGeneratingPalette}
-                      className="bg-purple-600 hover:bg-purple-500 text-white rounded p-1.5 transition-colors disabled:opacity-50"
-                    >
-                      <Sparkles size={14} className={isGeneratingPalette ? "animate-spin" : ""} />
-                    </button>
-                  </div>
-                  
-                  {/* Saved Palettes History */}
-                  {paletteHistory.length > 0 && (
-                    <div className="pt-1 space-y-2">
-                        <div className="text-[10px] text-slate-500 flex justify-between items-center">
-                            <span>Saved Palettes</span>
-                            <button onClick={() => setPaletteHistory([])} className="hover:text-red-400">Clear</button>
-                        </div>
-                        <div className="space-y-1.5 max-h-[140px] overflow-y-auto custom-scrollbar pr-1">
-                        {paletteHistory.map((palette, pIdx) => (
-                            <div key={pIdx} className="flex gap-0.5 p-1 bg-slate-900/50 rounded border border-slate-700/50 hover:border-slate-600 transition-colors">
-                            {palette.map((color, idx) => (
-                                <button 
-                                key={idx}
-                                onClick={() => updateSetting(activeColorTarget, color)}
-                                className="flex-1 h-5 first:rounded-l last:rounded-r hover:opacity-80 transition-opacity ring-1 ring-transparent hover:ring-white/20"
-                                style={{ backgroundColor: color }}
-                                title={color}
-                                />
-                            ))}
-                            <button 
-                                onClick={() => setPaletteHistory(prev => prev.filter((_, i) => i !== pIdx))}
-                                className="ml-1 px-1 text-slate-600 hover:text-red-400 flex items-center"
-                                title="Delete palette"
-                            >
-                                <XCircle size={12} />
-                            </button>
-                            </div>
-                        ))}
+                        <div>
+                          <label className="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>Simplify</span>
+                            <span>{settings.simplification}</span>
+                          </label>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="20" 
+                            step="1"
+                            value={settings.simplification}
+                            onChange={(e) => updateSetting('simplification', Number(e.target.value))}
+                            className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-indigo-500'}`}
+                          />
                         </div>
                     </div>
-                  )}
                 </div>
              </div>
            )}
@@ -464,6 +515,71 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                       {mode.label}
                     </button>
                   ))}
+                </div>
+                
+                {/* Redistribute Phase Button */}
+                {!isEditing && (
+                    <button
+                        onClick={onRedistributePhases}
+                        className="w-full flex items-center justify-center gap-2 mt-3 bg-slate-800 hover:bg-slate-700 p-2 rounded text-xs text-slate-300 transition-colors"
+                        title="Evenly distribute animation start times across all strokes"
+                    >
+                        <AlignJustify size={14}/> Redistribute Phases
+                    </button>
+                )}
+             </div>
+           )}
+        </div>
+
+        {/* Orbit Physics Section */}
+        <div className="border-b border-slate-800/50">
+           <SectionHeader id="orbit" label="Orbit Dynamics" icon={Orbit} />
+           {openSections.orbit && (
+             <div className="px-3 pb-3 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">Enable Orbit Physics</span>
+                  <input 
+                      type="checkbox" 
+                      checked={settings.orbit?.enabled || false} 
+                      onChange={(e) => updateOrbit('enabled', e.target.checked)}
+                      className={`w-4 h-4 rounded cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-orange-500'}`}
+                  />
+                </div>
+                
+                <div className={settings.orbit?.enabled ? "opacity-100 transition-opacity" : "opacity-40 pointer-events-none transition-opacity"}>
+                    <div>
+                      <div className="flex justify-between text-xs text-slate-500 mb-1">
+                        <span>Mass (Inertia)</span>
+                        <span>{settings.orbit?.mass.toFixed(1)}</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0.1" 
+                        max="5.0" 
+                        step="0.1"
+                        value={settings.orbit?.mass || 2.0}
+                        onChange={(e) => updateOrbit('mass', Number(e.target.value))}
+                        className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-orange-500'}`}
+                      />
+                    </div>
+                    <div className="mt-3">
+                      <div className="flex justify-between text-xs text-slate-500 mb-1">
+                        <span>Friction (Damping)</span>
+                        <span>{Math.round((settings.orbit?.friction || 0.9) * 100)}%</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0.80" 
+                        max="0.99" 
+                        step="0.01"
+                        value={settings.orbit?.friction || 0.95}
+                        onChange={(e) => updateOrbit('friction', Number(e.target.value))}
+                        className={`w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer ${isEditing ? 'accent-cyan-500' : 'accent-orange-500'}`}
+                      />
+                    </div>
+                </div>
+                <div className="text-[10px] text-slate-600 bg-slate-900/50 p-2 rounded">
+                    Tip: When enabled, the brush orbits your mouse based on speed and mass. Create loops by swinging your cursor!
                 </div>
              </div>
            )}

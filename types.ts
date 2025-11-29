@@ -26,6 +26,12 @@ export interface SymmetrySettings {
   gridGap: number; // For Grid
 }
 
+export interface OrbitSettings {
+  enabled: boolean;
+  mass: number;      // Determines how "heavy" the cursor feels (0.1 to 5.0)
+  friction: number;  // Determines how quickly it stops (0.8 to 0.99)
+}
+
 export interface StrokeSettings {
   color: string;
   endColor?: string; // Optional: if present, stroke is a gradient
@@ -37,6 +43,7 @@ export interface StrokeSettings {
   phase: number; // 0-1 offset
   symmetry: SymmetrySettings;
   animationMode: AnimationMode;
+  orbit: OrbitSettings;
 }
 
 export interface Stroke extends StrokeSettings {

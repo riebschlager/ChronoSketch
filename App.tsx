@@ -118,6 +118,11 @@ function App() {
       copies: 8,
       phaseShift: 0.05,
       gridGap: 150,
+    },
+    orbit: {
+        enabled: false,
+        mass: 2.0,
+        friction: 0.95
     }
   });
 
@@ -130,9 +135,12 @@ function App() {
         setStrokes(prev => prev.map(s => {
             if (s.id === activeStroke.id) {
                 const mergedSettings = { ...s, ...updates };
-                // Ensure symmetry object is properly merged
+                // Ensure deep merge for nested objects
                 if (updates.symmetry) {
                     mergedSettings.symmetry = { ...s.symmetry, ...updates.symmetry };
+                }
+                if (updates.orbit) {
+                    mergedSettings.orbit = { ...s.orbit, ...updates.orbit };
                 }
 
                 // If geometry parameters changed, re-process points
@@ -156,6 +164,9 @@ function App() {
              const next = { ...prev, ...updates };
              if (updates.symmetry) {
                  next.symmetry = { ...prev.symmetry, ...updates.symmetry };
+             }
+             if (updates.orbit) {
+                 next.orbit = { ...prev.orbit, ...updates.orbit };
              }
              return next;
         });
@@ -190,6 +201,17 @@ function App() {
       }));
 
       handleAddStroke(scaledPoints);
+  };
+
+  const handleRedistributePhases = () => {
+      setStrokes(prev => {
+          if (prev.length <= 1) return prev.map(s => ({ ...s, phase: 0 }));
+          
+          return prev.map((stroke, index) => ({
+              ...stroke,
+              phase: index / (prev.length - 1)
+          }));
+      });
   };
 
   const handleClear = () => {
@@ -246,13 +268,14 @@ function App() {
             try {
                 const json = JSON.parse(event.target?.result as string);
                 if (Array.isArray(json)) {
-                    // Backwards compatibility check: if rawPoints missing, use points
+                    // Backwards compatibility check
                     const fixedStrokes = json.map((s: any) => ({
                         ...s,
                         rawPoints: s.rawPoints || s.points,
                         smoothing: s.smoothing ?? 0,
                         simplification: s.simplification ?? 0,
-                        taper: s.taper ?? 0, // Backward compat for taper
+                        taper: s.taper ?? 0,
+                        orbit: s.orbit || { enabled: false, mass: 2, friction: 0.95 }
                     }));
                     setStrokes(fixedStrokes);
                     setSelectedStrokeId(null);
@@ -298,6 +321,7 @@ function App() {
         onExportJSON={handleExportJSON}
         onImportJSON={handleImportJSON}
         onAIGenerateStroke={handleAIGeneratedStroke}
+        onRedistributePhases={handleRedistributePhases}
       />
 
       {strokes.length === 0 && (

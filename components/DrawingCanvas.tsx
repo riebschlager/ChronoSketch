@@ -46,7 +46,16 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const currentPathRef = useRef<Point[]>([]);
-  const cursorPosRef = useRef<Point | null>(null);
+  
+  // Real mouse position
+  const mousePosRef = useRef<Point | null>(null);
+  
+  // Physics/Ghost cursor state
+  const physicsStateRef = useRef({
+      pos: { x: 0, y: 0 },
+      vel: { x: 0, y: 0 }
+  });
+
   const animationFrameRef = useRef<number>(0);
   
   const strokesRef = useRef<Stroke[]>(strokes);
@@ -160,20 +169,36 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     
     onSelectStroke(null);
     setIsDrawing(true);
-    currentPathRef.current = [point];
-    cursorPosRef.current = point;
+
+    mousePosRef.current = point;
+    
+    // If physics is enabled, snap to mouse initially so we don't draw a line from 0,0
+    if (currentSettings.orbit.enabled) {
+        physicsStateRef.current.pos = { ...point };
+        physicsStateRef.current.vel = { x: 0, y: 0 };
+        currentPathRef.current = [{ ...point }];
+    } else {
+        // Direct drawing
+        currentPathRef.current = [point];
+    }
   };
 
   const handleMove = (e: React.MouseEvent | React.TouchEvent) => {
     const point = getCanvasPoint(e);
     if (point) {
-      cursorPosRef.current = point;
+      mousePosRef.current = point;
       
-      if (isDrawing) {
-        const lastPoint = currentPathRef.current[currentPathRef.current.length - 1];
-        if (dist(lastPoint, point) > 2) {
-          currentPathRef.current.push(point);
-        }
+      // Update Physics target, but don't add point yet if Physics is ON (loop handles that)
+      if (currentSettings.orbit.enabled) {
+          // Pass, logic is in renderLoop
+      } else {
+          // Standard direct drawing
+          if (isDrawing) {
+            const lastPoint = currentPathRef.current[currentPathRef.current.length - 1];
+            if (lastPoint && dist(lastPoint, point) > 2) {
+              currentPathRef.current.push(point);
+            }
+          }
       }
     }
   };
@@ -189,7 +214,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   };
 
   const handleLeave = () => {
-    cursorPosRef.current = null;
+    mousePosRef.current = null;
     handleEnd();
   };
 
@@ -209,28 +234,20 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (endLength <= startLength) return;
 
     // --- Path Construction Logic ---
-    // Instead of simple lineTo, we calculate left and right offsets for a variable width polygon
-    
     const polygonPointsLeft: Point[] = [];
     const polygonPointsRight: Point[] = [];
 
     let currentDist = 0;
     
-    // Taper Logic: Taper is a percentage (0-100) of total length
     const taperLen = totalLength * (taper / 100);
 
     for (let i = 0; i < points.length; i++) {
         const p = points[i];
-        let d = 0;
         
         if (i > 0) {
             currentDist += dist(points[i-1], p);
         }
 
-        // Clip Points outside visible range
-        // Note: For perfect clipping we should interpolate the exact start/end points, 
-        // but for performance in JS loop, simplistic clipping with dense points is usually okay.
-        // We add a small buffer to ensure we catch the segment crossing the boundary
         if (currentDist < startLength && i < points.length - 1 && (currentDist + dist(p, points[i+1])) < startLength) {
              continue;
         }
@@ -238,7 +255,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
              break;
         }
 
-        // Calculate Normal
         let nx = 0;
         let ny = 0;
         
@@ -257,7 +273,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             nx = -dy / len;
             ny = dx / len;
         } else {
-            // Average normal
             const prev = points[i-1];
             const next = points[i+1];
             const dx = next.x - prev.x;
@@ -267,18 +282,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             ny = dx / len;
         }
 
-        // Calculate Width at this point based on Taper
         let currentWidth = baseWidth;
         if (taperLen > 0) {
-            // Distance relative to the TOTAL geometry (not just visible part)
-            // This ensures the taper stays at the ends of the path, not the ends of the animation
             if (currentDist < taperLen) {
                 currentWidth = baseWidth * (currentDist / taperLen);
             } else if (currentDist > totalLength - taperLen) {
                 currentWidth = baseWidth * ((totalLength - currentDist) / taperLen);
             }
         }
-        // Clamp width to 0
         currentWidth = Math.max(0, currentWidth);
         const halfWidth = currentWidth / 2;
 
@@ -294,7 +305,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     if (polygonPointsLeft.length < 2) return;
 
-    // Render Selection Glow (Behind)
     if (isSelected) {
       ctx.save();
       ctx.shadowColor = 'white';
@@ -304,7 +314,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
-      // Simple centerline for glow
       let started = false;
       let d = 0;
       for (let i = 0; i < points.length; i++) {
@@ -318,27 +327,16 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       ctx.restore();
     }
 
-    // Render Filled Polygon
     ctx.beginPath();
     ctx.moveTo(polygonPointsLeft[0].x, polygonPointsLeft[0].y);
-    
-    // Left side forward
     for (let i = 1; i < polygonPointsLeft.length; i++) {
         ctx.lineTo(polygonPointsLeft[i].x, polygonPointsLeft[i].y);
     }
-    
-    // Cap (Line to last right point)
     ctx.lineTo(polygonPointsRight[polygonPointsRight.length - 1].x, polygonPointsRight[polygonPointsRight.length - 1].y);
-
-    // Right side backward
     for (let i = polygonPointsRight.length - 2; i >= 0; i--) {
         ctx.lineTo(polygonPointsRight[i].x, polygonPointsRight[i].y);
     }
-    
     ctx.closePath();
-    
-    // Fill replaces Stroke
-    // Note: color/gradient is set in parent
     ctx.fill();
   };
 
@@ -358,7 +356,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (endColor && points.length > 1) {
         const startP = points[0];
         const endP = points[points.length - 1];
-        // Use fillStyle for polygon fill
         if (Math.abs(startP.x - endP.x) < 0.1 && Math.abs(startP.y - endP.y) < 0.1) {
              ctx.fillStyle = color;
         } else {
@@ -371,7 +368,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         ctx.fillStyle = color;
     }
 
-    // Reset line styles just in case, though we are filling
     ctx.lineWidth = 1; 
 
     const baseProgress = (time * speed + phase); 
@@ -395,7 +391,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             } else if (animationMode === AnimationMode.FLOW) {
                  let cycle = totalPhase % 2;
                  if (cycle < 0) cycle += 2;
-                 
                  if (cycle <= 1) {
                      startLen = 0;
                      endLen = totalLength * cycle;
@@ -476,17 +471,41 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
   };
 
-  const renderGhostCursor = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    if (!cursorPosRef.current || isUIHovered) return;
+  const renderGhostCursor = (ctx: CanvasRenderingContext2D, width: number, height: number, actualCursor: Point) => {
+    // If physics is enabled, we draw the physics pos, otherwise mouse pos.
+    // However, if physics is ON, the actual cursor is the Mouse, and the ghost is the weight.
+    // The physics simulation updates physicsStateRef directly.
     
-    const { x, y } = cursorPosRef.current;
+    // Determine the point to replicate
+    let x, y;
+    if (currentSettings.orbit.enabled) {
+        x = physicsStateRef.current.pos.x;
+        y = physicsStateRef.current.pos.y;
+    } else {
+        if (!mousePosRef.current) return;
+        x = mousePosRef.current.x;
+        y = mousePosRef.current.y;
+    }
+
     const { symmetry, color, width: strokeWidth } = currentSettings;
     const centerX = width / 2;
     const centerY = height / 2;
     const radius = Math.max(2, strokeWidth / 2);
 
+    // Draw connection string if Orbit is active and mouse is present
+    if (currentSettings.orbit.enabled && mousePosRef.current) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath();
+        ctx.moveTo(mousePosRef.current.x, mousePosRef.current.y);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.restore();
+    }
+
     ctx.fillStyle = color;
-    // Make it translucent
     ctx.globalAlpha = 0.5;
 
     const drawDot = () => {
@@ -563,7 +582,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         break;
     }
 
-    ctx.globalAlpha = 1.0; // Reset
+    ctx.globalAlpha = 1.0; 
   };
 
   const renderLoop = useCallback((time: number) => {
@@ -574,6 +593,48 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // --- Physics Simulation ---
+    if (currentSettings.orbit.enabled) {
+        const mouse = mousePosRef.current;
+        if (mouse || isDrawing) {
+            // Target is mouse if available, else last known position (stops drifting when mouse leaves, but momentum continues)
+            const target = mouse || physicsStateRef.current.pos;
+            
+            // Constants
+            const mass = Math.max(0.1, currentSettings.orbit.mass);
+            const k = 0.1 / mass; // Stiffness (lower mass = stiffer = faster tracking)
+            const friction = currentSettings.orbit.friction;
+
+            // F = -k * x
+            const dx = target.x - physicsStateRef.current.pos.x;
+            const dy = target.y - physicsStateRef.current.pos.y;
+            
+            const ax = dx * k;
+            const ay = dy * k;
+
+            physicsStateRef.current.vel.x = (physicsStateRef.current.vel.x + ax) * friction;
+            physicsStateRef.current.vel.y = (physicsStateRef.current.vel.y + ay) * friction;
+
+            physicsStateRef.current.pos.x += physicsStateRef.current.vel.x;
+            physicsStateRef.current.pos.y += physicsStateRef.current.vel.y;
+            
+            // If drawing, we sample based on frames for smooth curves
+            if (isDrawing) {
+                const newP = { ...physicsStateRef.current.pos };
+                const lastP = currentPathRef.current[currentPathRef.current.length - 1];
+                if (!lastP || dist(lastP, newP) > 1) { // Finer granularity for physics
+                    currentPathRef.current.push(newP);
+                }
+            }
+        }
+    } else {
+        // If orbit is disabled, ensure ghost cursor syncs to mouse immediately
+        if (mousePosRef.current) {
+            physicsStateRef.current.pos = { ...mousePosRef.current };
+            physicsStateRef.current.vel = { x: 0, y: 0 };
+        }
+    }
+
     const sec = time / 1000;
     
     // Render existing strokes
@@ -585,10 +646,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (isDrawing && currentPathRef.current.length > 1) {
         const points = currentPathRef.current;
         const tempTotalLength = getPathLength(points);
-        // Note: For preview, we don't apply full smoothing to save perf
         const previewStroke: Stroke = {
             ...currentSettings,
-            smoothing: 0,
+            smoothing: 0, // No smoothing during draw for perf
             simplification: 0,
             id: 'preview',
             points: points,
@@ -600,7 +660,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
 
     // Render Ghost Cursor
-    renderGhostCursor(ctx, canvas.width, canvas.height);
+    if ((mousePosRef.current && !isUIHovered) || (currentSettings.orbit.enabled && !isUIHovered)) {
+         renderGhostCursor(ctx, canvas.width, canvas.height, mousePosRef.current || {x:0,y:0});
+    }
 
     animationFrameRef.current = requestAnimationFrame(renderLoop);
   }, [isDrawing, currentSettings, selectedStrokeId, isUIHovered]);
