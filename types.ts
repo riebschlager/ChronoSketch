@@ -1,0 +1,54 @@
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export enum SymmetryType {
+  NONE = 'NONE',
+  MIRROR_X = 'MIRROR_X',
+  MIRROR_Y = 'MIRROR_Y',
+  MIRROR_XY = 'MIRROR_XY',
+  RADIAL = 'RADIAL',
+  GRID = 'GRID',
+}
+
+export enum AnimationMode {
+  LOOP = 'LOOP',    // 0 -> 100 -> restart
+  YOYO = 'YOYO',    // 0 -> 100 -> 0
+  FLOW = 'FLOW',    // Draw 0->100, then Undraw 0->100 (Erasure follows tip)
+}
+
+export interface SymmetrySettings {
+  type: SymmetryType;
+  copies: number; // For Radial
+  phaseShift: number; // For Radial: delays the animation of clones
+  gridGap: number; // For Grid
+}
+
+export interface StrokeSettings {
+  color: string;
+  endColor?: string; // Optional: if present, stroke is a gradient
+  width: number;
+  taper: number; // 0-100 represents percentage of length tapered on each end
+  smoothing: number; // 0-5 iterations
+  simplification: number; // 0-20 pixel tolerance
+  speed: number; // Cycles per second
+  phase: number; // 0-1 offset
+  symmetry: SymmetrySettings;
+  animationMode: AnimationMode;
+}
+
+export interface Stroke extends StrokeSettings {
+  id: string;
+  points: Point[];     // The processed/rendered points
+  rawPoints: Point[];  // The original captured points
+  totalLength: number;
+  timestamp: number;
+}
+
+// Pre-calculated path segment for efficient rendering
+export interface PathSegment {
+  point: Point;
+  lengthAtPoint: number;
+}

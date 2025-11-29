@@ -1,0 +1,5 @@
+{
+  "name": "ChronoSketch",
+  "description": "A generative art tool where every stroke becomes an infinitely looping animation. Create mesmerizing kaleidoscopes, tiling patterns, and rhythmic visual structures.",
+  "requestFramePermissions": []
+}
